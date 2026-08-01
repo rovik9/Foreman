@@ -15,18 +15,18 @@ async function req(path, opts = {}) {
 export const api = {
   listRuns: () => req("/runs"),
   getRun: (id) => req(`/runs/${id}`),
-  createRun: (prompt, project) =>
-    req("/runs", { method: "POST", body: JSON.stringify({ prompt, project }) }),
+  createRun: (prompt, project, mode, yolo) =>
+    req("/runs", { method: "POST", body: JSON.stringify({ prompt, project, mode, yolo }) }),
   chat: (runId, message) =>
     req(`/runs/${runId}/chat`, { method: "POST", body: JSON.stringify({ message }) }),
+  stopRun: (runId) => req(`/runs/${runId}/stop`, { method: "POST" }),
+  topUpBudget: (runId, add_usd) =>
+    req(`/runs/${runId}/budget`, { method: "POST", body: JSON.stringify({ add_usd }) }),
   acceptRun: (runId) => req(`/runs/${runId}/accept`, { method: "POST" }),
   listProjects: () => req("/projects"),
   createProject: (payload) =>
     req("/projects", { method: "POST", body: JSON.stringify(payload) }),
-  deleteProject: (slug) =>
-    fetch(`/projects/${slug}`, { method: "DELETE" }).then((r) => {
-      if (!r.ok) throw new Error(`${r.status}`);
-    }),
+  deleteProject: (slug) => req(`/projects/${slug}`, { method: "DELETE" }),
   listMemories: () => req("/memories"),
   decideMemory: (id, decision) =>
     req(`/memories/${id}/decision`, { method: "POST", body: JSON.stringify({ decision }) }),

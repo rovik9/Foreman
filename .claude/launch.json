@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "foreman-core",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@foreman/core", "dev"],
+      "port": 7700
+    }
+  ]
+}
