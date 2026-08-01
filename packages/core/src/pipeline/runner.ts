@@ -166,6 +166,12 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
     for (const task of ordered) {
       if (task.status === "passed") continue;
 
+      // /stop from any surface halts at the next task boundary
+      if (store.getRun(runId).status === "stopped") {
+        bus.emit({ type: "run_status", runId, data: { status: "stopped" } });
+        return;
+      }
+
       // run-level budget gate
       if (store.runCost(runId) >= limits.max_cost_per_run_usd) {
         store.setRunStatus(runId, "paused_budget");

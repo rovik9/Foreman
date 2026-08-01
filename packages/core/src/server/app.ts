@@ -44,6 +44,8 @@ export function createApp(deps: RunnerDeps): Hono {
 
   app.get("/runs", (c) => c.json(store.listRuns()));
 
+  app.get("/memories", (c) => c.json(store.listMemories(50)));
+
   app.get("/runs/:id", (c) => {
     try {
       const run = store.getRun(c.req.param("id"));
