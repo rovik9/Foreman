@@ -167,6 +167,200 @@ describe("runPipeline", () => {
     expect(builderCalls[1]!.input).toContain("crashed");
   });
 
+  it("plan mode pauses after the DAG and builds on approval", async () => {
+    const rig = makeRig(HAPPY_SCRIPT);
+    const run = rig.store.createRun("build me a landing page", { mode: "plan" });
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+    const deps = { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness };
+
+    await runPipeline(deps, run.id);
+
+    // held for approval: plan exists, nothing built, no builder calls
+    expect(rig.store.getRun(run.id).status).toBe("awaiting_user");
+    expect(rig.store.listTasks(run.id)).toHaveLength(2);
+    expect(rig.mock.calls.some((c) => c.model === "build-model")).toBe(false);
+    const msgs = rig.store.listMessages(run.id) as { content: string }[];
+    expect(msgs.some((m) => m.content.includes("Plan ready"))).toBe(true);
+
+    // user approves → execution proceeds to completion
+    rig.store.addMessage({ runId: run.id, role: "user", content: "build" });
+    await runPipeline(deps, run.id);
+    expect(rig.store.getRun(run.id).status).toBe("completed");
+    expect(rig.store.listTasks(run.id).every((t) => t.status === "passed")).toBe(true);
+  });
+
+  it("design mode executes documents and skips build tasks", async () => {
+    const rig = makeRig({
+      "pm-model": HAPPY_SCRIPT["pm-model"]!,
+      "arch-model": [
+        JSON.stringify({
+          tasks: [
+            {
+              id: "t1",
+              class: "plan",
+              description: "Write the design contract",
+              acceptanceCriteria: [{ type: "rubric", check: "complete contract" }],
+              deps: [],
+            },
+            {
+              id: "t2",
+              class: "build",
+              description: "Implement the page",
+              acceptanceCriteria: [{ type: "rubric", check: "follows contract" }],
+              deps: ["t1"],
+            },
+          ],
+        }),
+        "# Contract\n\nSections + palette.",
+      ],
+      "judge-model": [JSON.stringify({ score: 0.9, pass: true, feedback: "ok" })],
+    });
+    const run = rig.store.createRun("design a landing page", { mode: "design" });
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+
+    await runPipeline(
+      { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
+      run.id,
+    );
+
+    expect(rig.store.getRun(run.id).status).toBe("completed");
+    const tasks = rig.store.listTasks(run.id);
+    expect(tasks[0]!.status).toBe("passed");
+    expect(tasks[1]!.status).toBe("skipped");
+    expect(rig.mock.calls.some((c) => c.model === "build-model")).toBe(false);
+  });
+
+  it("yolo bypasses the clarify gate", async () => {
+    const rig = makeRig({
+      "pm-model": [
+        JSON.stringify({
+          summary: "vague request",
+          requirements: ["something"],
+          constraints: [],
+          confidence: 0.3, // would normally trigger clarification
+          questions: ["What do you mean?"],
+        }),
+        HAPPY_SCRIPT["pm-model"]![1]!, // memory review
+      ],
+      "arch-model": HAPPY_SCRIPT["arch-model"]!,
+      "build-model": HAPPY_SCRIPT["build-model"]!,
+      "judge-model": HAPPY_SCRIPT["judge-model"]!,
+      "memo-model": HAPPY_SCRIPT["memo-model"]!,
+    });
+    const run = rig.store.createRun("do the thing", { yolo: true });
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+
+    await runPipeline(
+      { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
+      run.id,
+    );
+
+    // no awaiting_user detour despite low confidence
+    expect(rig.store.getRun(run.id).status).toBe("completed");
+  });
+
+  it("runs independent tasks in the same parallel level", async () => {
+    const rig = makeRig({
+      "pm-model": HAPPY_SCRIPT["pm-model"]!,
+      "arch-model": [
+        JSON.stringify({
+          tasks: [
+            {
+              id: "t1",
+              class: "build",
+              description: "Create index.html",
+              acceptanceCriteria: [{ type: "rubric", check: "has hero" }],
+              deps: [],
+            },
+            {
+              id: "t2",
+              class: "build",
+              description: "Create style.css — INDEPENDENT of t1",
+              acceptanceCriteria: [{ type: "rubric", check: "dark theme" }],
+              deps: [], // same level as t1
+            },
+          ],
+        }),
+      ],
+      "build-model": [
+        JSON.stringify({ files: [{ path: "index.html", content: "<!doctype html>" }], notes: "" }),
+        JSON.stringify({ files: [{ path: "style.css", content: ":root{--bg:#000}" }], notes: "" }),
+      ],
+      "judge-model": [
+        JSON.stringify({ score: 0.9, pass: true, feedback: "ok" }),
+        JSON.stringify({ score: 0.9, pass: true, feedback: "ok" }),
+      ],
+    });
+    const run = rig.store.createRun("two independent files");
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+
+    await runPipeline(
+      { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
+      run.id,
+    );
+
+    expect(rig.store.getRun(run.id).status).toBe("completed");
+    expect(rig.store.listTasks(run.id).every((t) => t.status === "passed")).toBe(true);
+    // both builders ran without waiting for a dependency
+    expect(rig.mock.calls.filter((c) => c.model === "build-model")).toHaveLength(2);
+  });
+
+  it("paused_budget resumes after a top-up", async () => {
+    const rig = makeRig(HAPPY_SCRIPT);
+    rig.config.limits.max_cost_per_run_usd = 0.003; // pm+arch alone nearly exhaust it
+    const run = rig.store.createRun("budget squeeze");
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+    const deps = { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness };
+
+    await runPipeline(deps, run.id);
+    expect(rig.store.getRun(run.id).status).toBe("paused_budget");
+
+    rig.store.raiseBudget(run.id, 5.0);
+    await runPipeline(deps, run.id);
+
+    expect(rig.store.getRun(run.id).status).toBe("completed");
+    expect(rig.store.getRun(run.id).budget_raise).toBeCloseTo(5.0, 6);
+  });
+
+  it("large memory goes through the context AI before the architect", async () => {
+    const rig = makeRig({
+      "pm-model": HAPPY_SCRIPT["pm-model"]!,
+      "ctx-model": [
+        JSON.stringify({
+          briefing: "User prefers dark themes; keep pages single-file.",
+          watchouts: ["Do not add frameworks"],
+        }),
+      ],
+      "arch-model": HAPPY_SCRIPT["arch-model"]!,
+      "build-model": HAPPY_SCRIPT["build-model"]!,
+      "judge-model": HAPPY_SCRIPT["judge-model"]!,
+      "memo-model": HAPPY_SCRIPT["memo-model"]!,
+    });
+    // pre-load >1200 chars of approved memory so synthesis triggers
+    // (recall returns top-5; each entry must be chunky enough)
+    for (let i = 0; i < 8; i++) {
+      rig.store.addMemory({
+        kind: "preference",
+        text: `Preference ${i}: user likes dark themes, minimal layouts, ` + "x".repeat(280),
+        status: "approved",
+      });
+    }
+    const run = rig.store.createRun("dark landing page");
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+
+    await runPipeline(
+      { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
+      run.id,
+    );
+
+    const models = rig.mock.calls.map((c) => c.model);
+    expect(models).toContain("ctx-model");
+    expect(models.indexOf("ctx-model")).toBeLessThan(models.indexOf("arch-model"));
+    const archInput = rig.mock.calls.find((c) => c.model === "arch-model")!.input;
+    expect(archInput).toContain("briefing");
+    expect(archInput).toContain("Watchouts");
+  });
+
   it("escalates after max_iterations when the judge keeps failing", async () => {
     const rig = makeRig({
       "pm-model": HAPPY_SCRIPT["pm-model"]!,

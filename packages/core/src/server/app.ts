@@ -46,24 +46,43 @@ export function createApp(deps: RunnerDeps): Hono {
 
   app.post("/runs", async (c) => {
     const body = await c.req
-      .json<{ prompt?: string; project?: string }>()
-      .catch((): { prompt?: string; project?: string } => ({}));
+      .json<{ prompt?: string; project?: string; mode?: string; yolo?: boolean }>()
+      .catch((): { prompt?: string; project?: string; mode?: string; yolo?: boolean } => ({}));
     if (!body.prompt?.trim()) return c.json({ error: "prompt required" }, 400);
-    const run = store.createRun(body.prompt.trim());
+    const mode = ["full", "plan", "design"].includes(body.mode ?? "")
+      ? body.mode!
+      : "full";
     if (body.project?.trim()) {
       try {
         store.getProject(body.project.trim());
-        store.setRunProduct(run.id, body.project.trim());
       } catch {
         return c.json({ error: `unknown project: ${body.project}` }, 400);
       }
     }
+    const run = store.createRun(body.prompt.trim(), {
+      product: body.project?.trim() || undefined,
+      mode,
+      yolo: body.yolo === true,
+    });
     store.addMessage({ runId: run.id, role: "user", content: body.prompt.trim() });
     setImmediate(() => void runPipeline(deps, run.id));
     return c.json({ id: run.id }, 201);
   });
 
-  app.get("/projects", (c) => c.json(store.listProjects()));
+  app.get("/projects", (c) =>
+    c.json(
+      store.listProjects().map((p) => ({
+        ...p,
+        cost_usd: store.projectCost(p.slug),
+      })),
+    ),
+  );
+
+  app.delete("/projects/:slug", (c) => {
+    return store.deleteProject(c.req.param("slug"))
+      ? c.body(null, 204)
+      : c.json({ error: "not found" }, 404);
+  });
 
   app.post("/projects", async (c) => {
     const body = await c.req
@@ -220,6 +239,37 @@ export function createApp(deps: RunnerDeps): Hono {
             MIME[extname(target).toLowerCase()] ?? "application/octet-stream",
         },
       });
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
+  });
+
+  app.post("/runs/:id/stop", (c) => {
+    try {
+      const run = store.getRun(c.req.param("id"));
+      store.setRunStatus(run.id, "stopped");
+      bus.emit({ type: "run_status", runId: run.id, data: { status: "stopped" } });
+      return c.json({ ok: true });
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
+  });
+
+  app.post("/runs/:id/budget", async (c) => {
+    const body = await c.req
+      .json<{ add_usd?: number }>()
+      .catch((): { add_usd?: number } => ({}));
+    if (!body.add_usd || body.add_usd <= 0) {
+      return c.json({ error: "add_usd must be positive" }, 400);
+    }
+    try {
+      const run = store.getRun(c.req.param("id"));
+      store.raiseBudget(run.id, body.add_usd);
+      const fresh = store.getRun(run.id);
+      if (fresh.status === "paused_budget") {
+        setImmediate(() => void runPipeline(deps, run.id));
+      }
+      return c.json({ ok: true, budget_raise: fresh.budget_raise, resumed: fresh.status === "paused_budget" });
     } catch {
       return c.json({ error: "not found" }, 404);
     }

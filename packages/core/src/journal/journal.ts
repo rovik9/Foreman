@@ -81,12 +81,12 @@ export function renderJournal(store: Store, runId: string): string {
 }
 
 export function writeJournal(
-  memoryRoot: string,
-  product: string,
+  repoDir: string,
+  _unused: string,
   runId: string,
   markdown: string,
 ): string {
-  const dir = join(memoryRoot, "products", product, "journal");
+  const dir = join(repoDir, "journal");
   mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().slice(0, 10);
   const file = join(dir, `${stamp}_${runId.slice(0, 8)}.md`);

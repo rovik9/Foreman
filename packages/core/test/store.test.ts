@@ -95,4 +95,26 @@ describe("Store", () => {
   it("throws on unknown run", () => {
     expect(() => store.getRun("nope")).toThrow(/run not found/);
   });
+
+  it("recoverInterruptedRuns sweeps zombies to a resumable state", () => {
+    const run = store.createRun("interrupted");
+    const task = store.createTask({
+      runId: run.id,
+      seq: 1,
+      class: "build",
+      description: "x",
+    });
+    store.setRunStatus(run.id, "running");
+    store.updateTask(task.id, { status: "running" });
+
+    const recovered = store.recoverInterruptedRuns();
+
+    expect(recovered).toEqual([run.id]);
+    expect(store.getRun(run.id).status).toBe("failed");
+    expect(store.getTask(task.id).status).toBe("pending");
+    const msgs = store.listMessages(run.id) as { content: string }[];
+    expect(msgs.some((m) => m.content.includes("interrupted"))).toBe(true);
+    // idempotent: nothing left to recover
+    expect(store.recoverInterruptedRuns()).toEqual([]);
+  });
 });

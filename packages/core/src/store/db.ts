@@ -25,6 +25,9 @@ export interface RunRow {
   status: RunStatus;
   workspace_dir: string | null;
   product: string | null;
+  mode: string; // full | plan | design
+  yolo: number; // 1 = bypass permission gates
+  budget_raise: number; // extra USD on top of the run cap (top-ups)
   cost_usd: number;
   created_at: string;
   updated_at: string;
@@ -73,11 +76,12 @@ export interface ProjectRow {
   id: string;
   name: string;
   slug: string;
-  repo_url: string | null; // legacy alias of memory_repo
-  memory_dir: string | null;
-  memory_repo: string | null;
-  workspace_dirs: string; // JSON string[]
-  code_repos: string; // JSON string[]
+  repo_url: string | null;      // legacy alias of memory_repo (kept for compat)
+  memory_dir: string | null;    // custom local memory folder (default: memory/products/<slug>)
+  memory_repo: string | null;   // memory git remote
+  workspace_dirs: string;       // JSON string[] — project local folders
+  code_repos: string;           // JSON string[] — project git remotes
+  monorepo: number;             // 1 = one repo, 0 = polyrepo
   created_at: string;
 }
 
@@ -194,6 +198,12 @@ const MIGRATIONS: string[] = [
   ALTER TABLE projects ADD COLUMN memory_repo TEXT;
   ALTER TABLE projects ADD COLUMN workspace_dirs TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE projects ADD COLUMN code_repos TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE projects ADD COLUMN monorepo INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'full';
+  ALTER TABLE runs ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0;
+  `,
+  `
+  ALTER TABLE runs ADD COLUMN budget_raise REAL NOT NULL DEFAULT 0;
   `,
 ];
 
@@ -232,9 +242,16 @@ export class Store {
 
   // ---- runs ----
 
-  createRun(prompt: string): RunRow {
+  createRun(
+    prompt: string,
+    opts: { product?: string; mode?: string; yolo?: boolean } = {},
+  ): RunRow {
     const id = randomUUID();
-    this.db.prepare("INSERT INTO runs (id, prompt) VALUES (?, ?)").run(id, prompt);
+    this.db
+      .prepare(
+        "INSERT INTO runs (id, prompt, product, mode, yolo) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(id, prompt, opts.product ?? null, opts.mode ?? "full", opts.yolo ? 1 : 0);
     return this.getRun(id);
   }
 
@@ -262,6 +279,12 @@ export class Store {
     this.db
       .prepare("UPDATE runs SET product = ?, updated_at = datetime('now') WHERE id = ?")
       .run(product, id);
+  }
+
+  raiseBudget(id: string, addUsd: number): void {
+    this.db
+      .prepare("UPDATE runs SET budget_raise = budget_raise + ?, updated_at = datetime('now') WHERE id = ?")
+      .run(addUsd, id);
   }
 
   // ---- tasks ----
@@ -469,6 +492,33 @@ export class Store {
   }
 
   /**
+   * Crash recovery: a process kill leaves runs frozen in "running" and
+   * tasks in "running"/"verifying". Sweep marks runs failed (resumable)
+   * and resets tasks to pending. Returns the affected run ids.
+   */
+  recoverInterruptedRuns(): string[] {
+    const stuck = this.db
+      .prepare("SELECT id FROM runs WHERE status = 'running'")
+      .all() as { id: string }[];
+    if (stuck.length === 0) return [];
+    this.db.transaction(() => {
+      this.db
+        .prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'")
+        .run();
+      this.db
+        .prepare("UPDATE tasks SET status = 'pending' WHERE status IN ('running', 'verifying')")
+        .run();
+      const note = this.db.prepare(
+        "INSERT INTO messages (run_id, role, content) VALUES (?, 'system', ?)",
+      );
+      for (const r of stuck) {
+        note.run(r.id, "Run interrupted by process restart — recovered and resumable.");
+      }
+    })();
+    return stuck.map((r) => r.id);
+  }
+
+  /**
    * Full-text recall. Terms OR-matched with prefix wildcard, bm25 ranked.
    * Returned memories get access_count/last_accessed bumped — the recall
    * loop can later weigh frequency + recency.
@@ -523,12 +573,13 @@ export class Store {
     memoryRepo?: string;
     workspaceDirs?: string[];
     codeRepos?: string[];
+    monorepo?: boolean;
   }): ProjectRow {
     const id = randomUUID();
     this.db
       .prepare(
-        `INSERT INTO projects (id, name, slug, repo_url, memory_dir, memory_repo, workspace_dirs, code_repos)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO projects (id, name, slug, repo_url, memory_dir, memory_repo, workspace_dirs, code_repos, monorepo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -539,6 +590,7 @@ export class Store {
         p.memoryRepo ?? p.repoUrl ?? null,
         JSON.stringify(p.workspaceDirs ?? []),
         JSON.stringify(p.codeRepos ?? []),
+        p.monorepo === false ? 0 : 1,
       );
     return this.getProject(p.slug);
   }
@@ -546,6 +598,13 @@ export class Store {
   deleteProject(slug: string): boolean {
     const r = this.db.prepare("DELETE FROM projects WHERE slug = ?").run(slug);
     return r.changes > 0;
+  }
+
+  projectCost(slug: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS total FROM runs WHERE product = ?")
+      .get(slug) as { total: number };
+    return row.total;
   }
 
   getProject(slug: string): ProjectRow {

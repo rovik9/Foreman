@@ -94,4 +94,38 @@ describe("memory governance", () => {
     rig.store.setMemoryStatus(id, "approved");
     expect(rig.store.searchMemories("new chain")).toHaveLength(1);
   });
+
+  it("yolo auto-approves criticals instead of parking them", async () => {
+    const rig = makeRig({
+      "memo-model": [
+        JSON.stringify({
+          memories: [
+            { kind: "decision", text: "Rotate all API keys monthly", tags: ["security"], confidence: 0.9 },
+          ],
+        }),
+      ],
+      "pm-model": [
+        JSON.stringify({
+          decisions: [{ index: 0, decision: "critical", reason: "security policy" }],
+        }),
+      ],
+    });
+    const run = rig.store.createRun("x");
+    rig.store.addMessage({
+      runId: run.id,
+      role: "user",
+      content:
+        "A long conversation about infrastructure security and how credentials " +
+        "should be rotated, stored, and audited across every environment " +
+        "the fund operates in, including CI pipelines, staging servers, " +
+        "developer laptops, and cold offline backups.",
+    });
+
+    await distillRun(rig.harness, rig.store, run.id);
+    const counts = await reviewMemories(rig.harness, rig.store, run.id, { yolo: true });
+
+    expect(counts.critical).toBe(0);
+    expect(counts.approved).toBe(1);
+    expect(rig.store.searchMemories("rotate keys")).toHaveLength(1);
+  });
 });

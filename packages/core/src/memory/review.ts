@@ -37,6 +37,7 @@ export async function reviewMemories(
   harness: AgentHarness,
   store: Store,
   runId: string,
+  opts: { yolo?: boolean } = {},
 ): Promise<ReviewCounts> {
   const counts: ReviewCounts = { approved: 0, rejected: 0, critical: 0 };
   const pending = store.listPendingMemories();
@@ -63,15 +64,21 @@ export async function reviewMemories(
       store.setMemoryStatus(m.id, "rejected");
       counts.rejected++;
     } else {
-      store.setMemoryStatus(m.id, "awaiting_user");
-      counts.critical++;
+      // yolo: bypass the human gate, but log the auto-approval loudly
+      store.setMemoryStatus(m.id, opts.yolo ? "approved" : "awaiting_user");
+      if (opts.yolo) counts.approved++;
+      else counts.critical++;
     }
   }
 
   store.addMessage({
     runId,
     role: "interface",
-    content: `Memory review: ${counts.approved} approved, ${counts.rejected} rejected, ${counts.critical} awaiting your approval`,
+    content:
+      `Memory review: ${counts.approved} approved, ${counts.rejected} rejected, ` +
+      (opts.yolo && counts.critical === 0
+        ? "0 awaiting (yolo — criticals auto-approved)"
+        : `${counts.critical} awaiting your approval`),
   });
   return counts;
 }

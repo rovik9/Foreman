@@ -63,6 +63,13 @@ if (process.env.DISCORD_BOT_TOKEN) {
 }
 
 const port = Number(process.env.PORT ?? 7700);
+
+// ---- crash recovery: sweep zombies from a previous process, then resume ----
+for (const id of store.recoverInterruptedRuns()) {
+  console.log(`  recovering interrupted run ${id.slice(0, 8)}…`);
+  setImmediate(() => void runPipeline(runnerDeps, id));
+}
+
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`\n  ● FOREMAN mission control → http://localhost:${info.port}\n`);
   console.log(

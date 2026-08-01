@@ -20,10 +20,19 @@ export async function documentRun(
   const run = store.getRun(runId);
   const product = run.product ?? "misc";
 
+  // product repo root: the project's custom memory folder wins
+  let repoDir = deps.memoryDir
+    ? join(deps.memoryDir, "products", product)
+    : undefined;
   try {
-    const mirrorDir = deps.memoryDir
-      ? join(deps.memoryDir, "products", product, "memory")
-      : undefined;
+    const p = store.getProject(product);
+    if (p.memory_dir) repoDir = p.memory_dir;
+  } catch {
+    // not a registered project — default layout
+  }
+
+  try {
+    const mirrorDir = repoDir ? join(repoDir, "memory") : undefined;
     const added = await distillRun(harness, store, runId, mirrorDir);
     if (added > 0) {
       store.addMessage({
@@ -32,8 +41,9 @@ export async function documentRun(
         content: `Memory: +${added} durable entries proposed`,
       });
       deps.bus.emit({ type: "message", runId, data: { role: "memory", added } });
-      // governance: the Interface AI approves writes; critical goes to the user
-      await reviewMemories(harness, store, runId);
+      // governance: the Interface AI approves writes; critical goes to the
+      // user — unless the run is yolo (bypass all permissions)
+      await reviewMemories(harness, store, runId, { yolo: run.yolo === 1 });
     }
   } catch (err) {
     store.addMessage({
@@ -43,12 +53,12 @@ export async function documentRun(
     });
   }
 
-  if (!deps.memoryDir) return;
+  if (!repoDir) return;
 
   try {
     writeJournal(
-      deps.memoryDir,
-      product,
+      repoDir,
+      ".",
       runId,
       renderJournal(store, runId),
     );
@@ -61,7 +71,6 @@ export async function documentRun(
     return;
   }
 
-  const repoDir = join(deps.memoryDir, "products", product);
   const remote = config.memory.auto_push
     ? config.memory.remotes[product]
     : undefined;

@@ -8,13 +8,14 @@ import { docTask } from "../agents/doc.js";
 import { judgeTask } from "../agents/judge.js";
 import { getRealtimeFeed } from "../agents/realtime.js";
 import { routeTasks } from "../agents/interface.js";
+import { synthesizeContext, CONTEXT_SYNTH_THRESHOLD } from "../agents/context.js";
 import type { ForemanConfig } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
 import { documentRun } from "../journal/document.js";
 import { AssetStudio } from "../mcp/studio.js";
 import { recallBlock } from "../memory/recall.js";
 import { Router } from "../router/router.js";
-import type { Store } from "../store/db.js";
+import type { Store, TaskRow } from "../store/db.js";
 import { topoOrder } from "./dag.js";
 import { gatesSummary, runGates } from "./verifier.js";
 
@@ -86,6 +87,7 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
       }
 
       if (
+        !run.yolo &&
         spec.confidence < limits.pm_clarify_confidence_threshold &&
         spec.questions.length > 0
       ) {
@@ -123,7 +125,11 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
 
       const drafts = await planTasks(harness, runId, spec, [
         realtimeContext ? `Realtime context (current as of now):\n${realtimeContext}` : "",
-        memory ? `Shared project memory (read-only):\n${memory}` : "",
+        memory
+          ? memory.length > CONTEXT_SYNTH_THRESHOLD
+            ? await synthesizeContext(harness, runId, spec.summary, memory).catch(() => `Shared project memory (read-only):\n${memory}`)
+            : `Shared project memory (read-only):\n${memory}`
+          : "",
       ].filter(Boolean).join("\n\n") || undefined);
 
       // the Interface AI routes each task across preselected options,
@@ -173,9 +179,28 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         runId,
         data: { status: "planned", taskCount: tasks.length, spec },
       });
+
+      // plan mode: hold for user approval before any execution
+      if (run.mode === "plan" && !run.yolo) {
+        store.setRunStatus(runId, "awaiting_user");
+        store.addMessage({
+          runId,
+          role: "interface",
+          content:
+            `Plan ready — ${tasks.length} task(s):\n` +
+            tasks.map((t) => `${t.seq}. [${t.class}→${t.slot}] ${t.description}`).join("\n") +
+            `\n\nReply "build" to execute, or steer the plan.`,
+        });
+        bus.emit({
+          type: "run_status",
+          runId,
+          data: { status: "awaiting_user", mode: "plan" },
+        });
+        return;
+      }
     }
 
-    // ---- stage 2: execute DAG (sequential for now) ----
+    // ---- stage 2: execute DAG (level-parallel) ----
     const workspace = join(
       limits.sandbox.workspace_root,
       runId,
@@ -189,18 +214,46 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
     );
     const byId = new Map(tasks.map((t) => [t.id, t]));
     const ordered = order.map((o) => byId.get(o.id)!);
+    const depsOf = new Map(ordered.map((t) => [t.id, JSON.parse(t.deps) as string[]]));
 
+    const specForBuild: PmSpec = spec ?? {
+      summary: run.prompt,
+      product: run.product ?? "misc",
+      requirements: [run.prompt],
+      constraints: [],
+      confidence: 1,
+      questions: [],
+    };
+
+    const finished = new Set<string>(
+      ordered.filter((t) => t.status === "passed").map((t) => t.id),
+    );
+
+    // design mode: documents only — build-class tasks skip ahead of execution
     for (const task of ordered) {
-      if (task.status === "passed") continue;
+      if (run.mode === "design" && task.class === "build" && !finished.has(task.id)) {
+        store.updateTask(task.id, { status: "skipped" });
+        bus.emit({
+          type: "task_status",
+          runId,
+          taskId: task.id,
+          data: { status: "skipped", reason: "design mode" },
+        });
+        finished.add(task.id);
+      }
+    }
 
-      // /stop from any surface halts at the next task boundary
-      if (store.getRun(runId).status === "stopped") {
+    while (finished.size < ordered.length) {
+      const fresh = store.getRun(runId);
+
+      // /stop from any surface halts at the next level boundary
+      if (fresh.status === "stopped") {
         bus.emit({ type: "run_status", runId, data: { status: "stopped" } });
         return;
       }
 
-      // run-level budget gate
-      if (store.runCost(runId) >= limits.max_cost_per_run_usd) {
+      // run-level budget gate (raises via POST /runs/:id/budget)
+      if (store.runCost(runId) >= limits.max_cost_per_run_usd + fresh.budget_raise) {
         store.setRunStatus(runId, "paused_budget");
         bus.emit({
           type: "run_status",
@@ -210,133 +263,71 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         return;
       }
 
-      store.updateTask(task.id, { status: "running" });
-      bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "running" } });
-
-      let feedback: string | undefined;
-      let passed = false;
-      const maxIter = limits.max_iterations_per_task;
-
-      for (let attempt = 1; attempt <= maxIter; attempt++) {
-        // per-task budget gate
-        if (store.getTask(task.id).cost_usd >= limits.max_cost_per_task_usd) break;
-
-        store.updateTask(task.id, { iterations: attempt });
-
-        const specForBuild: PmSpec = spec ?? {
-          summary: run.prompt,
-          product: run.product ?? "misc",
-          requirements: [run.prompt],
-          constraints: [],
-          confidence: 1,
-          questions: [],
-        };
-
-        try {
-          const taskMemory = recallBlock(store, task.description, 4);
-          if (task.class === "build") {
-            const built = await buildTask(
-              harness,
-              runId,
-              task,
-              specForBuild,
-              workspace,
-              feedback,
-              recentUserSteering(store, runId),
-              taskMemory,
-            );
-
-            // register everything the builder produced
-            for (const f of built.files) {
-              store.addArtifact({ runId, taskId: task.id, path: f.path, kind: "code" });
-              bus.emit({
-                type: "artifact",
-                runId,
-                taskId: task.id,
-                data: { path: f.path, kind: "code" },
-              });
-            }
-          } else {
-            // plan / fetch / critique → markdown document
-            const docPath = await docTask(
-              harness,
-              runId,
-              task,
-              specForBuild,
-              workspace,
-              feedback,
-              recentUserSteering(store, runId),
-              taskMemory,
-            );
-            store.addArtifact({ runId, taskId: task.id, path: docPath, kind: "doc" });
-            bus.emit({
-              type: "artifact",
-              runId,
-              taskId: task.id,
-              data: { path: docPath, kind: "doc" },
-            });
-          }
-        } catch (err) {
-          // a crashed attempt is feedback, not a dead run
-          feedback = `Attempt ${attempt} crashed: ${err instanceof Error ? err.message : String(err)}\nFix the underlying issue and respond in the required format.`;
-          bus.emit({
-            type: "task_status",
-            runId,
-            taskId: task.id,
-            data: { status: "retry", attempt, error: feedback.slice(0, 200) },
-          });
-          continue;
-        }
-
-        store.updateTask(task.id, { status: "verifying" });
-        bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "verifying", attempt } });
-
-        const gates = await runGates(workspace, limits.sandbox.shell_allowlist);
-        bus.emit({ type: "gate", runId, taskId: task.id, data: gates });
-
-        const verdict = await judgeTask(
-          harness,
+      const ready = ordered.filter(
+        (t) => !finished.has(t.id) && (depsOf.get(t.id) ?? []).every((d) => finished.has(d)),
+      );
+      if (ready.length === 0) {
+        // blocked: survivors depend on tasks that can never pass
+        const blocked = ordered.filter((t) => !finished.has(t.id));
+        store.setRunStatus(runId, "awaiting_user");
+        store.addMessage({
           runId,
-          store.getTask(task.id),
-          gatesSummary(gates),
-          listFiles(workspace),
-        );
-        bus.emit({ type: "judge", runId, taskId: task.id, data: verdict });
-
-        const gatesOk = gates.every((g) => g.ok);
-        if (gatesOk && verdict.pass && verdict.score >= limits.judge_pass_score) {
-          passed = true;
-          break;
-        }
-        feedback = [
-          gatesOk ? "" : `Gate failures:\n${gatesSummary(gates)}`,
-          `Judge (score ${verdict.score}): ${verdict.feedback}`,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
+          role: "system",
+          content: `Blocked: ${blocked.map((t) => t.description).join("; ")} — dependencies did not pass. Reply with guidance.`,
+        });
+        bus.emit({
+          type: "run_status",
+          runId,
+          data: { status: "awaiting_user", blocked: blocked.map((t) => t.id) },
+        });
+        return;
       }
 
-      if (!passed) {
+      const results = await runPool(ready, limits.max_parallel_builders, (task) =>
+        runTask(deps, runId, task, workspace, specForBuild),
+      );
+
+      let escalation: TaskOutcome | undefined;
+      for (const r of results) {
+        if (r.outcome === "passed") {
+          finished.add(r.task.id);
+          continue;
+        }
+        if (r.outcome === "stopped") {
+          bus.emit({ type: "run_status", runId, data: { status: "stopped" } });
+          return;
+        }
+        if (r.outcome === "budget") {
+          store.setRunStatus(runId, "paused_budget");
+          bus.emit({
+            type: "run_status",
+            runId,
+            data: { status: "paused_budget", costUsd: store.runCost(runId) },
+          });
+          return;
+        }
+        escalation ??= r;
+      }
+
+      if (escalation) {
+        const task = escalation.task;
         store.updateTask(task.id, { status: "escalated" });
         store.setRunStatus(runId, "awaiting_user");
         store.addMessage({
           runId,
           taskId: task.id,
           role: "system",
-          content: `Task "${task.description}" failed after ${maxIter} attempts or hit its budget. Last feedback:\n${feedback ?? "budget exhausted"}\n\nReply with guidance, or say "retry" / "skip".`,
+          content: `Task "${task.description}" failed after ${limits.max_iterations_per_task} attempts or hit its budget. Last feedback:\n${escalation.feedback ?? "budget exhausted"}\n\nReply with guidance, or say "retry" / "skip".`,
         });
         bus.emit({
           type: "task_status",
           runId,
           taskId: task.id,
-          data: { status: "escalated", feedback },
+          data: { status: "escalated", feedback: escalation.feedback },
         });
         bus.emit({ type: "run_status", runId, data: { status: "awaiting_user" } });
         return;
       }
-
-      store.updateTask(task.id, { status: "passed", output: feedback ?? null });
-      bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "passed" } });
     }
 
     // ---- asset studios (best-effort; never blocks the report) ----
@@ -402,4 +393,151 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
       // documentation must never mask the original failure
     }
   }
+}
+
+// ---- level-parallel execution helpers ----
+
+interface TaskOutcome {
+  task: TaskRow;
+  outcome: "passed" | "escalated" | "stopped" | "budget";
+  feedback?: string;
+}
+
+/** Bounded worker pool — at most `size` tasks in flight, start order kept. */
+async function runPool<T, R>(
+  items: T[],
+  size: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  let i = 0;
+  async function next(): Promise<void> {
+    while (i < items.length) {
+      const item = items[i++]!;
+      results.push(await worker(item));
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(size, items.length) }, () => next()),
+  );
+  return results;
+}
+
+/**
+ * One task's full build→verify→retry cycle. Self-contained so the pool can
+ * run several concurrently; all shared state goes through the store.
+ */
+async function runTask(
+  deps: RunnerDeps,
+  runId: string,
+  task: TaskRow,
+  workspace: string,
+  specForBuild: PmSpec,
+): Promise<TaskOutcome> {
+  const { config, store, bus, harness } = deps;
+  const { limits } = config;
+
+  store.updateTask(task.id, { status: "running" });
+  bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "running" } });
+
+  let feedback: string | undefined;
+  const maxIter = limits.max_iterations_per_task;
+
+  for (let attempt = 1; attempt <= maxIter; attempt++) {
+    const fresh = store.getRun(runId);
+    if (fresh.status === "stopped") return { task, outcome: "stopped" };
+    if (store.runCost(runId) >= limits.max_cost_per_run_usd + fresh.budget_raise) {
+      return { task, outcome: "budget" };
+    }
+    // per-task budget gate
+    if (store.getTask(task.id).cost_usd >= limits.max_cost_per_task_usd) break;
+
+    store.updateTask(task.id, { iterations: attempt });
+
+    try {
+      const taskMemory = recallBlock(store, task.description, 4);
+      if (task.class === "build") {
+        const built = await buildTask(
+          harness,
+          runId,
+          task,
+          specForBuild,
+          workspace,
+          feedback,
+          recentUserSteering(store, runId),
+          taskMemory,
+        );
+
+        // register everything the builder produced
+        for (const f of built.files) {
+          store.addArtifact({ runId, taskId: task.id, path: f.path, kind: "code" });
+          bus.emit({
+            type: "artifact",
+            runId,
+            taskId: task.id,
+            data: { path: f.path, kind: "code" },
+          });
+        }
+      } else {
+        // plan / fetch / critique → markdown document
+        const docPath = await docTask(
+          harness,
+          runId,
+          task,
+          specForBuild,
+          workspace,
+          feedback,
+          recentUserSteering(store, runId),
+          taskMemory,
+        );
+        store.addArtifact({ runId, taskId: task.id, path: docPath, kind: "doc" });
+        bus.emit({
+          type: "artifact",
+          runId,
+          taskId: task.id,
+          data: { path: docPath, kind: "doc" },
+        });
+      }
+    } catch (err) {
+      // a crashed attempt is feedback, not a dead run
+      feedback = `Attempt ${attempt} crashed: ${err instanceof Error ? err.message : String(err)}\nFix the underlying issue and respond in the required format.`;
+      bus.emit({
+        type: "task_status",
+        runId,
+        taskId: task.id,
+        data: { status: "retry", attempt, error: feedback.slice(0, 200) },
+      });
+      continue;
+    }
+
+    store.updateTask(task.id, { status: "verifying" });
+    bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "verifying", attempt } });
+
+    const gates = await runGates(workspace, limits.sandbox.shell_allowlist);
+    bus.emit({ type: "gate", runId, taskId: task.id, data: gates });
+
+    const verdict = await judgeTask(
+      harness,
+      runId,
+      store.getTask(task.id),
+      gatesSummary(gates),
+      listFiles(workspace),
+    );
+    bus.emit({ type: "judge", runId, taskId: task.id, data: verdict });
+
+    const gatesOk = gates.every((g) => g.ok);
+    if (gatesOk && verdict.pass && verdict.score >= limits.judge_pass_score) {
+      store.updateTask(task.id, { status: "passed", output: feedback ?? null });
+      bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "passed" } });
+      return { task, outcome: "passed" };
+    }
+    feedback = [
+      gatesOk ? "" : `Gate failures:\n${gatesSummary(gates)}`,
+      `Judge (score ${verdict.score}): ${verdict.feedback}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  return { task, outcome: "escalated", feedback };
 }
