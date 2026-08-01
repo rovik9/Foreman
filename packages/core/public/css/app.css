@@ -364,14 +364,59 @@ a:hover { text-decoration: underline; }
 }
 #project-modal input:focus { border-color: var(--accent); }
 #project-modal > form > input { margin-bottom: 2px; }
-#pf-folders label, #pf-repos label { display: flex; align-items: center; gap: 8px; font: 590 11.5px var(--font); color: var(--text-3); }
-#pf-folder-count { width: 60px; }
+#pf-folders label, #pf-repos label, #pf-repo-count-row { display: flex; align-items: center; gap: 8px; font: 590 11.5px var(--font); color: var(--text-3); }
+.pf-checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+#pf-folder-count, #pf-repo-count { width: 60px; }
 #pf-folder-inputs { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-#pf-folder-inputs input { background: var(--bg-1); color: var(--text); border: 1px solid var(--glass-border); border-radius: var(--r-xs); padding: 8px 10px; font: inherit; }
+
+.pf-path-row { display: flex; gap: 6px; margin: 4px 0; }
+.pf-path-row input {
+  flex: 1; background: var(--bg-1); color: var(--text); border: 1px solid var(--glass-border);
+  border-radius: var(--r-xs); padding: 8px 10px; font: inherit;
+}
+.pf-browse {
+  flex: none; background: var(--glass-hover); color: var(--text-2); border: 1px solid var(--glass-border);
+  border-radius: var(--r-xs); padding: 8px 12px; font: 590 11.5px var(--font); cursor: pointer;
+}
+.pf-browse:hover { color: var(--text); }
+
+#pf-repo-inputs { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.pf-repo-row { display: flex; align-items: center; gap: 8px; }
+.pf-repo-row input {
+  flex: 1; background: var(--bg-1); color: var(--text); border: 1px solid var(--glass-border);
+  border-radius: var(--r-xs); padding: 8px 10px; font: inherit;
+}
+.pf-repo-status { flex: none; font: 700 10.5px var(--font); max-width: 130px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-repo-status.checking { color: var(--text-3); }
+.pf-repo-status.ok { color: var(--ok); }
+.pf-repo-status.err { color: var(--err); cursor: help; }
+
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal-actions button { border-radius: var(--r-sm); padding: 9px 16px; font: 700 12.5px var(--font); cursor: pointer; border: 0; }
-#pf-cancel { background: var(--glass-hover); color: var(--text-2); }
-.modal-actions button[type="submit"] { background: var(--gold-grad); color: var(--brand-ink); }
+#pf-cancel, #fs-picker-cancel { background: var(--glass-hover); color: var(--text-2); }
+.modal-actions button[type="submit"], #fs-picker-choose { background: var(--gold-grad); color: var(--brand-ink); }
+
+/* ------------------------------------------------------------- fs picker */
+#fs-picker {
+  position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+  background: rgba(4, 4, 8, .78); backdrop-filter: blur(3px);
+}
+.fs-picker-card {
+  width: 460px; max-width: calc(100vw - 32px); border-radius: var(--r-lg); padding: 18px;
+  background: color-mix(in srgb, var(--bg-1) 90%, transparent); border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+#fs-picker-path {
+  font: 12px var(--mono); color: var(--text-2); padding: 8px 10px; margin-bottom: 8px;
+  background: var(--bg-0); border: 1px solid var(--glass-border); border-radius: var(--r-xs);
+  overflow-x: auto; white-space: nowrap;
+}
+#fs-picker-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: var(--r-xs); }
+.fs-entry { padding: 8px 12px; font-size: 12.5px; color: var(--text-2); cursor: pointer; border-bottom: 1px solid var(--glass-border); transition: background .1s var(--ease); }
+.fs-entry:last-child { border-bottom: 0; }
+.fs-entry:hover { background: var(--glass-hover); color: var(--text); }
+.fs-entry.fs-up { color: var(--text-3); font-style: italic; }
+.fs-empty { padding: 16px 12px; color: var(--text-4); font-size: 12px; text-align: center; }
 
 /* ------------------------------------------------------------ responsive */
 @media (max-width: 1080px) {

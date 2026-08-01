@@ -6,6 +6,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
+import { checkRepoAccess, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
 
 /** Static mission-control app (Claude Code owns everything under public/). */
@@ -69,6 +70,26 @@ export function createApp(deps: RunnerDeps): Hono {
     return c.json({ id: run.id }, 201);
   });
 
+  // local folder browser for the "new project" modal (see server/fs.ts)
+  app.get("/fs/list", (c) => {
+    try {
+      return c.json(listDirectories(c.req.query("path")));
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "cannot read directory" },
+        400,
+      );
+    }
+  });
+
+  app.post("/fs/check-repo", async (c) => {
+    const body = await c.req
+      .json<{ url?: string }>()
+      .catch((): { url?: string } => ({}));
+    if (!body.url?.trim()) return c.json({ error: "url required" }, 400);
+    return c.json(await checkRepoAccess(body.url.trim()));
+  });
+
   app.get("/projects", (c) =>
     c.json(
       store.listProjects().map((p) => ({
@@ -93,6 +114,7 @@ export function createApp(deps: RunnerDeps): Hono {
         memory_repo?: string;
         workspace_dirs?: string[];
         code_repos?: string[];
+        monorepo?: boolean;
       }>()
       .catch(() => ({}) as Record<string, never>);
     if (!body.name?.trim()) return c.json({ error: "name required" }, 400);
@@ -130,6 +152,7 @@ export function createApp(deps: RunnerDeps): Hono {
       memoryRepo,
       workspaceDirs: body.workspace_dirs ?? [],
       codeRepos: body.code_repos ?? [],
+      monorepo: body.monorepo,
     });
     if (deps.memoryDir) {
       scaffoldProjectRepo(deps.memoryDir, slug);

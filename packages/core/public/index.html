@@ -86,23 +86,45 @@
     <form id="project-form">
       <h3>New project</h3>
       <input id="pf-name" placeholder="Project name" required>
-      <input id="pf-memory-dir" placeholder="Memory local folder (blank = default)">
-      <input id="pf-memory-repo" placeholder="Memory git repo URL (blank = auto/none)">
-      <label>Monorepo? <input type="checkbox" id="pf-monorepo" checked></label>
+
+      <label for="pf-memory-dir">Memory local folder (blank = default)</label>
+      <div class="pf-path-row">
+        <input id="pf-memory-dir" placeholder="blank = default">
+        <button type="button" class="pf-browse" data-target="pf-memory-dir">Browse&hellip;</button>
+      </div>
+
+      <label for="pf-memory-repo">Memory git repo URL (blank = auto/none)</label>
+      <input id="pf-memory-repo" placeholder="git@github.com:you/project-memory.git">
+
+      <label class="pf-checkbox"><input type="checkbox" id="pf-monorepo" checked> Monorepo — one repo for everything</label>
+
       <div id="pf-folders">
         <label>Project local folders: <input type="number" id="pf-folder-count" min="0" value="1"></label>
         <div id="pf-folder-inputs"></div>
       </div>
+
       <div id="pf-repos">
-        <label>Code git repo(s), comma-separated (blank for local-only):
-          <input id="pf-code-repos" placeholder="git@github.com:you/app.git, …">
-        </label>
+        <label id="pf-repo-count-row" class="hidden">How many repos? <input type="number" id="pf-repo-count" min="1" value="1"></label>
+        <div id="pf-repo-inputs"></div>
       </div>
+
       <div class="modal-actions">
         <button type="button" id="pf-cancel">Cancel</button>
         <button type="submit">Create</button>
       </div>
     </form>
+  </div>
+
+  <!-- local folder picker (server-driven — browsers can't hand a page a real OS path) -->
+  <div id="fs-picker" class="hidden">
+    <div class="fs-picker-card">
+      <div id="fs-picker-path"></div>
+      <div id="fs-picker-list"></div>
+      <div class="modal-actions">
+        <button type="button" id="fs-picker-cancel">Cancel</button>
+        <button type="button" id="fs-picker-choose">Choose this folder</button>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/js/app.js"></script>
