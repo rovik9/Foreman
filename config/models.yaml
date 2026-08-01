@@ -29,6 +29,10 @@ slots:
     provider: anthropic
     model: claude-sonnet-5             # placeholder
     via: anthropic
+  memorizer:                           # memory distiller — cheapest slot on purpose
+    provider: moonshot
+    model: kimi-k3                     # placeholder
+    via: moonshot
 
 # Router: task class -> ordered candidate slots (cheapest-first preference
 # is applied inside each class using the cost table below).
@@ -48,6 +52,7 @@ cost_weights:
   judge:     1.5
   realtime:  0.2
   pm:        1.5
+  memorizer: 1.0
 
 asset_studios:
   video:

@@ -20,7 +20,13 @@ const bus = new ForemanBus();
 const providers = buildProvidersFromEnv();
 const harness = new AgentHarness(config, store, bus, providers);
 
-const app = createApp({ config, store, bus, harness });
+const app = createApp({
+  config,
+  store,
+  bus,
+  harness,
+  memoryDir: resolve(root, config.memory.mirror_dir),
+});
 
 const port = Number(process.env.PORT ?? 7700);
 serve({ fetch: app.fetch, port }, (info) => {

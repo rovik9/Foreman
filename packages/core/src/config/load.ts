@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml";
 import {
   ForemanConfig,
   LimitsConfigSchema,
+  MemoryConfigSchema,
   ModelsConfigSchema,
   PricesConfigSchema,
   type ModelsConfig,
@@ -56,5 +57,15 @@ export function loadConfig(configDir: string): ForemanConfig {
     console.warn("config/prices.yaml not found — cost estimates will be $0");
   }
 
-  return { models, limits, prices };
+  // memory.yaml is optional — defaults: local vault at ./memory, no push
+  let memory = MemoryConfigSchema.parse({});
+  try {
+    memory = MemoryConfigSchema.parse(
+      parseYaml(readFileSync(join(configDir, "memory.yaml"), "utf8")),
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  return { models, limits, prices, memory };
 }

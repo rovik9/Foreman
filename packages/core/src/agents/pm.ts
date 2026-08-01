@@ -4,6 +4,7 @@ import { parseJson } from "./json.js";
 
 export const PmSpecSchema = z.object({
   summary: z.string().min(1),
+  product: z.string().default("misc"), // kebab-case product name — owns a memory repo
   requirements: z.array(z.string().min(1)).min(1),
   constraints: z.array(z.string()).default([]),
   confidence: z.number().min(0).max(1),
@@ -17,6 +18,7 @@ The user gives you a rough goal. Rewrite it as a precise engineering spec.
 Respond with JSON only, no prose, exactly this shape:
 {
   "summary": "one-sentence goal",
+  "product": "short-kebab-case-name of the product this work belongs to (reuse the same name across runs on the same product)",
   "requirements": ["concrete, testable requirement", ...],
   "constraints": ["explicit limits or non-goals"],
   "confidence": 0.0-1.0,
@@ -33,11 +35,19 @@ export async function refinePrompt(
   runId: string,
   rawPrompt: string,
   priorAnswers: string[] = [],
+  memoryBlock?: string,
 ): Promise<PmSpec> {
-  const input =
-    priorAnswers.length === 0
-      ? `User request:\n${rawPrompt}`
-      : `User request:\n${rawPrompt}\n\nUser answers to your earlier questions:\n${priorAnswers.join("\n")}`;
+  const input = [
+    `User request:\n${rawPrompt}`,
+    memoryBlock
+      ? `Durable memory about the user and their projects (use it):\n${memoryBlock}`
+      : "",
+    priorAnswers.length > 0
+      ? `User answers to your earlier questions:\n${priorAnswers.join("\n")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const r = await harness.run({
     runId,

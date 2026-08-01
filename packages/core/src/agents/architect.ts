@@ -51,13 +51,21 @@ export async function planTasks(
   harness: AgentHarness,
   runId: string,
   spec: PmSpec,
+  extraContext?: string,
 ): Promise<TaskDraft[]> {
+  const input = [
+    `Spec:\n${JSON.stringify(spec, null, 2)}`,
+    extraContext ? `Realtime context (current as of now):\n${extraContext}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
   const r = await harness.run({
     runId,
     slot: "architect",
     role: "architect",
     system: ARCHITECT_SYSTEM,
-    input: `Spec:\n${JSON.stringify(spec, null, 2)}`,
+    input,
     maxTokens: 4096,
   });
   const { tasks } = parseJson(r.output, TaskListSchema);

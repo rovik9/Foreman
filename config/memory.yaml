@@ -1,0 +1,9 @@
+# Memory & documentation sync.
+# Every run is documented locally first (journal + distilled memories as
+# markdown under mirror_dir/products/<product>/), git-committed, and pushed
+# when auto_push is on and a remote is configured for that product.
+# New product = new repo under mirror_dir/products/<product>/.
+
+mirror_dir: memory
+auto_push: false                    # flip to true once remotes exist
+remotes: {}                         # e.g. foreman-fund: git@github.com:rovik/foreman-fund-memory.git

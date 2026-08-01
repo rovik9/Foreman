@@ -153,8 +153,26 @@ router, N platform adapters. Both behind pairing/authz.
 
 ---
 
+## Memory & documentation (the chain of custody)
+Every run is documented — who did what, why, how, and what it cost.
+- **Store of record:** SQLite `memories` table + FTS5 full-text index (zero deps).
+- **Distiller:** after every run (success or failure), the cheapest slot
+  (memorizer = Kimi K3) reads the transcript and extracts durable knowledge —
+  preference / fact / decision / lesson / convention.
+- **Recall:** every new prompt is FTS-matched against memory and the top hits
+  are injected into the PM's context before refinement.
+- **Journal:** per-run markdown with the plan table (task × slot × model ×
+  iterations × cost), decisions/steering log, artifacts, and full cost ledger.
+- **Layout:** `memory/products/<product>/` — each product is its own git repo
+  (`journal/`, `memory/<kind>/`). PM names the product; new product = new repo.
+- **Sync:** local-first commit always; push when `config/memory.yaml` has
+  `auto_push: true` + a remote for that product. Push failure never loses the
+  local commit.
+- **Human window:** point Obsidian at `memory/` — browse/edit everything;
+  SQLite stays the machine store.
+
 ## Risks / open questions
-- **Placeholder models** (GPT-5.6 Sol, Sonnet 5, Opus 5, Kimi K3) — slots exist day one; wire real IDs when you have keys. OpenRouter covers most via one key.
+- **Placeholder models** (GPT-5.6 Sol, Sonnet 5, Opus 5, Kimi K3) — slots exist day one; wire real IDs + real prices in `config/prices.yaml` when keys arrive.
 - **Judge loops can still thrash** — caps + escalation mitigate; watch cost_ledger early.
 - **MCP asset studios** vary wildly in maturity; placeholder config until Higgsfield MCP is confirmed working.
 - **Sandboxing**: builders write only under `runs/<id>/workspace`; shell commands run with allowlist. Non-negotiable for auto-iteration safety.

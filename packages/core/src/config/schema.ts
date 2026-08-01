@@ -24,6 +24,7 @@ export const AssetStudioSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
 });
+export type AssetStudioConfig = z.infer<typeof AssetStudioSchema>;
 
 export const TaskClassSchema = z.enum(["plan", "build", "critique", "fetch"]);
 export type TaskClass = z.infer<typeof TaskClassSchema>;
@@ -65,4 +66,15 @@ export interface ForemanConfig {
   models: ModelsConfig;
   limits: LimitsConfig;
   prices: PricesConfig;
+  memory: MemoryConfig;
 }
+
+export const MemoryConfigSchema = z.object({
+  /** Local-first vault root; per-product subdirs are their own git repos. */
+  mirror_dir: z.string().min(1).default("memory"),
+  /** Push to remotes after each documented run. Local commit always happens. */
+  auto_push: z.boolean().default(false),
+  /** product slug -> git remote (use SSH URLs, never tokens in URLs). */
+  remotes: z.record(z.string(), z.string()).default({}),
+});
+export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;

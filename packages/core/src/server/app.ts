@@ -1,8 +1,28 @@
+import { existsSync, readFileSync } from "node:fs";
+import { extname, resolve, sep } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { MISSION_CONTROL_HTML } from "./ui.js";
+
+const MIME: Record<string, string> = {
+  ".html": "text/html",
+  ".css": "text/css",
+  ".js": "text/javascript",
+  ".json": "application/json",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+};
 
 export function createApp(deps: RunnerDeps): Hono {
   const { store, bus } = deps;
@@ -48,6 +68,29 @@ export function createApp(deps: RunnerDeps): Hono {
       await new Promise(() => {}); // hold the stream open
     }),
   );
+
+  app.get("/runs/:id/files/*", (c) => {
+    const id = c.req.param("id");
+    try {
+      const run = store.getRun(id);
+      if (!run.workspace_dir) return c.json({ error: "no workspace" }, 404);
+      const rel = c.req.path.split(`/runs/${id}/files/`)[1] ?? "";
+      const base = resolve(run.workspace_dir);
+      const target = resolve(base, rel);
+      if (target !== base && !target.startsWith(base + sep)) {
+        return c.json({ error: "forbidden" }, 403);
+      }
+      if (!existsSync(target)) return c.json({ error: "not found" }, 404);
+      return new Response(readFileSync(target), {
+        headers: {
+          "Content-Type":
+            MIME[extname(target).toLowerCase()] ?? "application/octet-stream",
+        },
+      });
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
+  });
 
   app.post("/runs/:id/chat", async (c) => {
     const id = c.req.param("id");

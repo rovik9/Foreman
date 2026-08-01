@@ -5,8 +5,13 @@ import { planTasks } from "../agents/architect.js";
 import { refinePrompt, type PmSpec } from "../agents/pm.js";
 import { buildTask } from "../agents/builder.js";
 import { judgeTask } from "../agents/judge.js";
+import { getRealtimeFeed } from "../agents/realtime.js";
 import type { ForemanConfig } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
+import { documentRun } from "../journal/document.js";
+import { AssetStudio } from "../mcp/studio.js";
+import { recallBlock } from "../memory/recall.js";
+import { Router } from "../router/router.js";
 import type { Store } from "../store/db.js";
 import { topoOrder } from "./dag.js";
 import { gatesSummary, runGates } from "./verifier.js";
@@ -16,7 +21,13 @@ export interface RunnerDeps {
   store: Store;
   bus: ForemanBus;
   harness: AgentHarness;
+  /** Local memory vault root (from config.memory.mirror_dir, resolved). */
+  memoryDir?: string;
 }
+
+const REALTIME_TRIGGER =
+  /\b(news|trends?|markets?|latest|today|current events?|prices?)\b/i;
+const ASSET_TRIGGER = /(video|audio|image|logo|asset|thumbnail|clip)/i;
 
 function listFiles(dir: string, base: string = dir): string[] {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return [];
@@ -30,10 +41,18 @@ function listFiles(dir: string, base: string = dir): string[] {
   return out;
 }
 
+function recentUserSteering(store: Store, runId: string): string[] {
+  return (store.listMessages(runId) as { role: string; content: string }[])
+    .filter((m) => m.role === "user")
+    .slice(-5)
+    .map((m) => m.content);
+}
+
 /**
- * The pipeline: intake → plan → build/verify loop → report.
- * Resumable by design — stages already completed in the store are skipped,
- * so a run paused for budget or user input picks up where it left off.
+ * The pipeline: intake (memory-recalled) → plan (router-priced, realtime-fed)
+ * → build/verify loop → asset studios → report → document (memory + journal
+ * + git sync). Resumable by design — completed stages in the store are
+ * skipped, so a paused run picks up where it left off.
  */
 export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void> {
   const { config, store, bus, harness } = deps;
@@ -49,11 +68,17 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
     let spec: PmSpec | null = null;
 
     if (tasks.length === 0) {
-      const userMessages = (store.listMessages(runId) as { role: string; content: string }[])
-        .filter((m) => m.role === "user")
-        .map((m) => m.content);
+      const userMessages = recentUserSteering(store, runId);
 
-      spec = await refinePrompt(harness, runId, run.prompt, userMessages.slice(1));
+      const memory = recallBlock(store, run.prompt);
+      spec = await refinePrompt(
+        harness,
+        runId,
+        run.prompt,
+        userMessages.slice(1),
+        memory,
+      );
+      store.setRunProduct(runId, spec.product);
 
       if (
         spec.confidence < limits.pm_clarify_confidence_threshold &&
@@ -74,7 +99,25 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         return;
       }
 
-      const drafts = await planTasks(harness, runId, spec);
+      // realtime context for time-sensitive work (best-effort)
+      const specText = `${spec.summary} ${spec.requirements.join(" ")}`;
+      let realtimeContext: string | undefined;
+      if (REALTIME_TRIGGER.test(specText)) {
+        try {
+          const digest = await getRealtimeFeed(harness).digest(runId, spec.summary);
+          realtimeContext = digest.digest;
+          bus.emit({
+            type: "message",
+            runId,
+            data: { role: "realtime", digest: digest.digest },
+          });
+        } catch {
+          // the feed is best-effort; planning proceeds without it
+        }
+      }
+
+      const drafts = await planTasks(harness, runId, spec, realtimeContext);
+      const router = new Router(config);
       const idMap = new Map<string, string>();
       for (const [i, d] of drafts.entries()) {
         const row = store.createTask({
@@ -85,6 +128,7 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
           acceptanceCriteria: d.acceptanceCriteria,
           deps: [],
         });
+        store.updateTask(row.id, { slot: router.pick(d.class) });
         idMap.set(d.id, row.id);
       }
       // remap deps from architect-local ids to store uuids
@@ -104,7 +148,7 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
       });
     }
 
-    // ---- stage 2: execute DAG (sequential for Phase 1) ----
+    // ---- stage 2: execute DAG (sequential for now) ----
     const workspace = join(
       limits.sandbox.workspace_root,
       runId,
@@ -145,28 +189,36 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         if (store.getTask(task.id).cost_usd >= limits.max_cost_per_task_usd) break;
 
         store.updateTask(task.id, { iterations: attempt });
-        const steering = (store.listMessages(runId) as { role: string; content: string }[])
-          .filter((m) => m.role === "user")
-          .slice(-5)
-          .map((m) => m.content);
 
         const specForBuild: PmSpec = spec ?? {
           summary: run.prompt,
+          product: run.product ?? "misc",
           requirements: [run.prompt],
           constraints: [],
           confidence: 1,
           questions: [],
         };
 
-        await buildTask(
+        const built = await buildTask(
           harness,
           runId,
           task,
           specForBuild,
           workspace,
           feedback,
-          steering,
+          recentUserSteering(store, runId),
         );
+
+        // register everything the builder produced
+        for (const f of built.files) {
+          store.addArtifact({ runId, taskId: task.id, path: f.path, kind: "code" });
+          bus.emit({
+            type: "artifact",
+            runId,
+            taskId: task.id,
+            data: { path: f.path, kind: "code" },
+          });
+        }
 
         store.updateTask(task.id, { status: "verifying" });
         bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "verifying", attempt } });
@@ -174,11 +226,10 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         const gates = await runGates(workspace, limits.sandbox.shell_allowlist);
         bus.emit({ type: "gate", runId, taskId: task.id, data: gates });
 
-        const freshTask = store.getTask(task.id);
         const verdict = await judgeTask(
           harness,
           runId,
-          freshTask,
+          store.getTask(task.id),
           gatesSummary(gates),
           listFiles(workspace),
         );
@@ -220,6 +271,34 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
       bus.emit({ type: "task_status", runId, taskId: task.id, data: { status: "passed" } });
     }
 
+    // ---- asset studios (best-effort; never blocks the report) ----
+    const assetText = spec
+      ? `${spec.summary} ${spec.requirements.join(" ")}`
+      : run.prompt;
+    if (ASSET_TRIGGER.test(assetText)) {
+      for (const [name, studioCfg] of Object.entries(config.models.asset_studios)) {
+        const kind = (["video", "audio", "image"].includes(name) ? name : "image") as
+          | "video"
+          | "audio"
+          | "image";
+        const result = await new AssetStudio(studioCfg, kind).generate(
+          spec?.summary ?? run.prompt,
+        );
+        if (result.ok) {
+          for (const a of result.artifacts) {
+            store.addArtifact({ runId, path: a.path, kind: a.kind });
+            bus.emit({ type: "artifact", runId, data: a });
+          }
+        } else if (result.error) {
+          store.addMessage({
+            runId,
+            role: "system",
+            content: `Asset studio "${name}" skipped: ${result.error}`,
+          });
+        }
+      }
+    }
+
     // ---- stage 3: report ----
     store.setRunStatus(runId, "completed");
     store.addMessage({
@@ -233,6 +312,9 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
       runId,
       data: { status: "completed", costUsd: store.runCost(runId) },
     });
+
+    // ---- stage 4: document (memory distill + journal + git sync) ----
+    await documentRun(deps, runId);
   } catch (err) {
     store.setRunStatus(runId, "failed");
     store.addMessage({
@@ -245,5 +327,11 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
       runId,
       data: { status: "failed", error: err instanceof Error ? err.message : String(err) },
     });
+    // failures carry the lessons — document them too
+    try {
+      await documentRun(deps, runId);
+    } catch {
+      // documentation must never mask the original failure
+    }
   }
 }

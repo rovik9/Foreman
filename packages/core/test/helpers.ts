@@ -7,22 +7,31 @@ import { ForemanBus } from "../src/events/bus.js";
 import { MockProvider } from "../src/providers/mock.js";
 import { Store } from "../src/store/db.js";
 
-export function makeConfig(workspaceRoot: string): ForemanConfig {
+export function makeConfig(dir: string): ForemanConfig {
   return {
     models: {
       slots: {
-        pm: { provider: "anthropic", model: "pm-model", via: "openrouter" },
-        architect: { provider: "openai", model: "arch-model", via: "openrouter" },
-        builder_a: { provider: "moonshot", model: "build-model", via: "openrouter" },
-        judge: { provider: "anthropic", model: "judge-model", via: "openrouter" },
+        pm: { provider: "anthropic", model: "pm-model", via: "anthropic" },
+        architect: { provider: "openai", model: "arch-model", via: "openai" },
+        builder_a: { provider: "moonshot", model: "build-model", via: "moonshot" },
+        judge: { provider: "anthropic", model: "judge-model", via: "anthropic" },
+        realtime: { provider: "groq", model: "rt-model", via: "groq" },
+        memorizer: { provider: "moonshot", model: "memo-model", via: "moonshot" },
       },
       tiers: {
         plan: ["architect"],
         build: ["builder_a"],
         critique: ["judge"],
-        fetch: ["architect"],
+        fetch: ["realtime"],
       },
-      cost_weights: {},
+      cost_weights: {
+        architect: 3.0,
+        builder_a: 1.0,
+        judge: 1.5,
+        realtime: 0.2,
+        pm: 1.5,
+        memorizer: 1.0,
+      },
       asset_studios: {},
     },
     prices: {
@@ -31,8 +40,15 @@ export function makeConfig(workspaceRoot: string): ForemanConfig {
         "arch-model": [10.0, 30.0],
         "build-model": [0.6, 2.5],
         "judge-model": [3.0, 15.0],
+        "rt-model": [0.1, 0.2],
+        "memo-model": [0.6, 2.5],
       },
       default: [1.0, 3.0],
+    },
+    memory: {
+      mirror_dir: join(dir, "memory"),
+      auto_push: false,
+      remotes: {},
     },
     limits: {
       max_iterations_per_task: 3,
@@ -41,7 +57,7 @@ export function makeConfig(workspaceRoot: string): ForemanConfig {
       max_parallel_builders: 1,
       pm_clarify_confidence_threshold: 0.7,
       judge_pass_score: 0.85,
-      sandbox: { workspace_root: workspaceRoot, shell_allowlist: ["npx"] },
+      sandbox: { workspace_root: join(dir, "runs"), shell_allowlist: ["npx"] },
     },
   };
 }
@@ -57,7 +73,7 @@ export interface TestRig {
 
 export function makeRig(script: Record<string, string[]>): TestRig {
   const dir = mkdtempSync(join(tmpdir(), "foreman-test-"));
-  const config = makeConfig(join(dir, "runs"));
+  const config = makeConfig(dir);
   const store = new Store(join(dir, "test.db"));
   const bus = new ForemanBus();
   const mock = new MockProvider(script);
@@ -113,5 +129,17 @@ export const HAPPY_SCRIPT: Record<string, string[]> = {
   "judge-model": [
     JSON.stringify({ score: 0.95, pass: true, feedback: "good" }),
     JSON.stringify({ score: 0.9, pass: true, feedback: "good" }),
+  ],
+  "memo-model": [
+    JSON.stringify({
+      memories: [
+        {
+          kind: "preference",
+          text: "User likes dark themes for web pages",
+          tags: ["ui", "style"],
+          confidence: 0.9,
+        },
+      ],
+    }),
   ],
 };

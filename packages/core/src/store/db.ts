@@ -24,6 +24,7 @@ export interface RunRow {
   prompt: string;
   status: RunStatus;
   workspace_dir: string | null;
+  product: string | null;
   cost_usd: number;
   created_at: string;
   updated_at: string;
@@ -42,6 +43,30 @@ export interface TaskRow {
   iterations: number;
   cost_usd: number;
   output: string | null;
+}
+
+export interface MemoryRow {
+  id: string;
+  kind: string;
+  text: string;
+  tags: string; // JSON string[]
+  confidence: number;
+  source_run_id: string | null;
+  access_count: number;
+  created_at: string;
+  last_accessed_at: string;
+}
+
+export interface CostRow {
+  id: number;
+  run_id: string;
+  task_id: string | null;
+  slot: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+  created_at: string;
 }
 
 const MIGRATIONS: string[] = [
@@ -106,6 +131,39 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_cost_run ON cost_ledger(run_id);
   `,
+  `
+  CREATE TABLE memories (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,             -- preference | fact | decision | lesson | convention
+    text TEXT NOT NULL,
+    tags TEXT NOT NULL DEFAULT '[]',
+    confidence REAL NOT NULL DEFAULT 0.8,
+    source_run_id TEXT,
+    access_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_accessed_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE VIRTUAL TABLE memories_fts USING fts5(
+    text, tags, content='memories', content_rowid='rowid'
+  );
+
+  CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, text, tags) VALUES (new.rowid, new.text, new.tags);
+  END;
+  CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, text, tags)
+      VALUES ('delete', old.rowid, old.text, old.tags);
+  END;
+  CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, text, tags)
+      VALUES ('delete', old.rowid, old.text, old.tags);
+    INSERT INTO memories_fts(rowid, text, tags) VALUES (new.rowid, new.text, new.tags);
+  END;
+  `,
+  `
+  ALTER TABLE runs ADD COLUMN product TEXT;
+  `,
 ];
 
 export class Store {
@@ -167,6 +225,12 @@ export class Store {
     this.db
       .prepare("UPDATE runs SET workspace_dir = ?, updated_at = datetime('now') WHERE id = ?")
       .run(dir, id);
+  }
+
+  setRunProduct(id: string, product: string): void {
+    this.db
+      .prepare("UPDATE runs SET product = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(product, id);
   }
 
   // ---- tasks ----
@@ -332,5 +396,75 @@ export class Store {
       .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS total FROM cost_ledger WHERE run_id = ?")
       .get(runId) as { total: number };
     return row.total;
+  }
+
+  // ---- memories (cross-run durable knowledge) ----
+
+  addMemory(m: {
+    kind: string;
+    text: string;
+    tags?: string[];
+    confidence?: number;
+    sourceRunId?: string;
+  }): string {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        "INSERT INTO memories (id, kind, text, tags, confidence, source_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        m.kind,
+        m.text,
+        JSON.stringify(m.tags ?? []),
+        m.confidence ?? 0.8,
+        m.sourceRunId ?? null,
+      );
+    return id;
+  }
+
+  /**
+   * Full-text recall. Terms OR-matched with prefix wildcard, bm25 ranked.
+   * Returned memories get access_count/last_accessed bumped — the recall
+   * loop can later weigh frequency + recency.
+   */
+  searchMemories(query: string, limit = 5): MemoryRow[] {
+    const terms = query
+      .replace(/['"()*:^]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 2)
+      .slice(0, 8);
+    if (terms.length === 0) return [];
+    const match = terms.map((t) => `"${t}"*`).join(" OR ");
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM memories_fts f
+         JOIN memories m ON m.rowid = f.rowid
+         WHERE memories_fts MATCH ?
+         ORDER BY bm25(memories_fts)
+         LIMIT ?`,
+      )
+      .all(match, limit) as MemoryRow[];
+    if (rows.length > 0) {
+      const bump = this.db.prepare(
+        "UPDATE memories SET access_count = access_count + 1, last_accessed_at = datetime('now') WHERE id = ?",
+      );
+      this.db.transaction(() => {
+        for (const r of rows) bump.run(r.id);
+      })();
+    }
+    return rows;
+  }
+
+  listMemories(limit = 50): MemoryRow[] {
+    return this.db
+      .prepare("SELECT * FROM memories ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as MemoryRow[];
+  }
+
+  listCosts(runId: string): CostRow[] {
+    return this.db
+      .prepare("SELECT * FROM cost_ledger WHERE run_id = ? ORDER BY id")
+      .all(runId) as CostRow[];
   }
 }

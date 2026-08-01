@@ -10,7 +10,13 @@ describe("runPipeline", () => {
     const run = rig.store.createRun("build me a landing page");
 
     await runPipeline(
-      { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
+      {
+        config: rig.config,
+        store: rig.store,
+        bus: rig.bus,
+        harness: rig.harness,
+        memoryDir: rig.config.memory.mirror_dir,
+      },
       run.id,
     );
 
@@ -23,10 +29,15 @@ describe("runPipeline", () => {
     expect(tasks.every((t) => t.status === "passed")).toBe(true);
     // dependency order: style.css task ran after index.html task
     expect(tasks[0]!.description).toContain("index.html");
+    // router assigned the cheapest build slot
+    expect(tasks[0]!.slot).toBe("builder_a");
 
     const ws = join(rig.dir, "runs", run.id, "workspace");
     expect(existsSync(join(ws, "index.html"))).toBe(true);
     expect(existsSync(join(ws, "style.css"))).toBe(true);
+
+    // builder files registered as artifacts
+    expect(rig.store.listArtifacts(run.id).length).toBeGreaterThanOrEqual(2);
 
     // every agent fired in role order
     const models = rig.mock.calls.map((c) => c.model);
@@ -34,6 +45,25 @@ describe("runPipeline", () => {
     expect(models[1]).toBe("arch-model");
     expect(models.filter((m) => m === "build-model")).toHaveLength(2);
     expect(models.filter((m) => m === "judge-model")).toHaveLength(2);
+
+    // ---- documentation chain of custody ----
+    // 1. durable memory distilled into the store (FTS-searchable)
+    expect(rig.store.listMemories()).toHaveLength(1);
+    expect(rig.store.searchMemories("dark themes")).toHaveLength(1);
+    // 2. memory mirrored to markdown (obsidian window)
+    expect(
+      existsSync(
+        join(rig.dir, "memory", "products", "misc", "memory", "preference"),
+      ),
+    ).toBe(true);
+    // 3. journal written
+    expect(
+      existsSync(join(rig.dir, "memory", "products", "misc", "journal")),
+    ).toBe(true);
+    // 4. product memory repo committed locally
+    expect(
+      existsSync(join(rig.dir, "memory", "products", "misc", ".git")),
+    ).toBe(true);
   });
 
   it("pauses for clarification when PM confidence is low, resumes on answer", async () => {
