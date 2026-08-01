@@ -1,12 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
-import { MISSION_CONTROL_HTML } from "./ui.js";
+
+/** Static mission-control app (Claude Code owns everything under public/). */
+const PUBLIC_DIR = resolve(import.meta.dirname, "../../public");
 
 const MIME: Record<string, string> = {
   ".html": "text/html",
@@ -31,7 +34,15 @@ export function createApp(deps: RunnerDeps): Hono {
   const app = new Hono();
   app.use("*", cors());
 
-  app.get("/", (c) => c.html(MISSION_CONTROL_HTML));
+  app.get("/", (c) => {
+    try {
+      return c.html(readFileSync(join(PUBLIC_DIR, "index.html"), "utf8"));
+    } catch {
+      return c.text("mission control app missing — see packages/core/public/", 500);
+    }
+  });
+  app.use("/css/*", serveStatic({ root: PUBLIC_DIR }));
+  app.use("/js/*", serveStatic({ root: PUBLIC_DIR }));
 
   app.post("/runs", async (c) => {
     const body = await c.req
