@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "foreman-core",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@foreman/core", "dev"],
-      "port": 7700
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/rovik/Documents/Foreman/packages/core && exec pnpm dev"],
+      "port": 7700,
+      "autoPort": true
     }
   ]
 }
