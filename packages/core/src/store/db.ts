@@ -211,6 +211,18 @@ export class Store {
       .all(runId) as TaskRow[];
   }
 
+  setTaskDeps(id: string, deps: string[]): void {
+    this.db
+      .prepare("UPDATE tasks SET deps = ? WHERE id = ?")
+      .run(JSON.stringify(deps), id);
+  }
+
+  listRuns(limit = 100): RunRow[] {
+    return this.db
+      .prepare("SELECT * FROM runs ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as RunRow[];
+  }
+
   updateTask(
     id: string,
     patch: Partial<
