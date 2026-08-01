@@ -34,7 +34,7 @@ describe("Store", () => {
       description: "scaffold",
       acceptanceCriteria: [{ type: "command", run: "pnpm build" }],
     });
-    const t2 = store.createTask({
+    store.createTask({
       runId: run.id,
       seq: 2,
       class: "build",
