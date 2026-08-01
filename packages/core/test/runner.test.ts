@@ -78,6 +78,8 @@ describe("runPipeline", () => {
         }),
         // second call after the user answers
         HAPPY_SCRIPT["pm-model"]![0]!,
+        // memory governance review
+        HAPPY_SCRIPT["pm-model"]![1]!,
       ],
       "arch-model": HAPPY_SCRIPT["arch-model"]!,
       "build-model": HAPPY_SCRIPT["build-model"]!,
@@ -98,6 +100,71 @@ describe("runPipeline", () => {
     expect(rig.store.getRun(run.id).status).toBe("completed");
     // PM saw the answer on its second call
     expect(rig.mock.calls[1]!.input).toContain("Web, dark theme");
+  });
+
+  it("handles plan-class tasks as documents and survives builder crashes", async () => {
+    const rig = makeRig({
+      "pm-model": HAPPY_SCRIPT["pm-model"]!,
+      "arch-model": [
+        JSON.stringify({
+          tasks: [
+            {
+              id: "t1",
+              class: "plan",
+              description: "Write a design contract document",
+              acceptanceCriteria: [
+                { type: "rubric", check: "Contract names sections and colors" },
+              ],
+              deps: [],
+            },
+            {
+              id: "t2",
+              class: "build",
+              description: "Create index.html per the contract",
+              acceptanceCriteria: [
+                { type: "rubric", check: "Follows the contract" },
+              ],
+              deps: ["t1"],
+            },
+          ],
+        }),
+        "# Design Contract\n\nSections: hero, stats, strategies. Colors: #0d1117 bg.",
+      ],
+      "build-model": [
+        "this is not json at all — a crashed builder attempt",
+        JSON.stringify({
+          files: [{ path: "index.html", content: "<!doctype html>" }],
+          notes: "",
+        }),
+      ],
+      "judge-model": [
+        JSON.stringify({ score: 0.9, pass: true, feedback: "contract ok" }),
+        JSON.stringify({ score: 0.9, pass: true, feedback: "page ok" }),
+      ],
+    });
+    const run = rig.store.createRun("landing page with a plan first");
+
+    await runPipeline(
+      { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
+      run.id,
+    );
+
+    const final = rig.store.getRun(run.id);
+    expect(final.status).toBe("completed");
+
+    const tasks = rig.store.listTasks(run.id);
+    expect(tasks.every((t) => t.status === "passed")).toBe(true);
+
+    // plan task produced a markdown document, not files-JSON
+    const ws = join(rig.dir, "runs", run.id, "workspace");
+    expect(existsSync(join(ws, "docs", "task-1.md"))).toBe(true);
+
+    // builder crashed once (invalid JSON), retried with the error as feedback,
+    // then passed on attempt 2
+    expect(tasks[1]!.iterations).toBe(2);
+    const builderCalls = rig.mock.calls.filter((c) => c.model === "build-model");
+    expect(builderCalls).toHaveLength(2);
+    expect(builderCalls[1]!.input).toContain("crashed");
   });
 
   it("escalates after max_iterations when the judge keeps failing", async () => {

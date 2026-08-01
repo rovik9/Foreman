@@ -31,6 +31,26 @@ function validateRegistry(models: ModelsConfig): void {
       );
     }
   }
+  for (const [role, cfg] of Object.entries(models.roles)) {
+    for (const opt of cfg.options) {
+      if (!models.slots[opt]) {
+        throw new Error(
+          `models.yaml: role "${role}" lists unknown slot "${opt}" in options`,
+        );
+      }
+    }
+    if (!cfg.options.includes(cfg.active)) {
+      throw new Error(
+        `models.yaml: role "${role}" active slot "${cfg.active}" is not in its options`,
+      );
+    }
+  }
+  // the pipeline cannot run without these
+  for (const required of ["interface", "architect", "builder", "judge", "memorizer"] as const) {
+    if (!models.roles[required]) {
+      throw new Error(`models.yaml: required role "${required}" is not configured`);
+    }
+  }
 }
 
 export function loadConfig(configDir: string): ForemanConfig {

@@ -54,12 +54,16 @@ export async function buildTask(
   workspace: string,
   feedback?: string,
   steering: string[] = [],
+  memoryBlock?: string,
 ): Promise<BuildOutput> {
   const parts = [
     `Task: ${task.description}`,
     `Acceptance criteria: ${task.acceptance_criteria}`,
     `Spec:\n${JSON.stringify(spec, null, 2)}`,
   ];
+  if (memoryBlock) {
+    parts.push(`Shared project memory (read-only):\n${memoryBlock}`);
+  }
   if (steering.length > 0) {
     parts.push(`Live user steering (must respect):\n${steering.join("\n")}`);
   }
@@ -70,7 +74,7 @@ export async function buildTask(
   const r = await harness.run({
     runId,
     taskId: task.id,
-    slot: task.slot ?? "builder_a",
+    slot: task.slot ?? harness.roleSlot("builder"),
     role: "builder",
     system: BUILDER_SYSTEM,
     input: parts.join("\n\n"),

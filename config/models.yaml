@@ -1,63 +1,76 @@
-# Foreman model registry.
-# Every model is a swappable SLOT. Direct vendor keys only — no middleman:
-# first-party serving (quality guarantee) + exact per-provider billing.
-# Cost estimation comes from config/prices.yaml, not the gateway.
+# Foreman model registry — LIVE (all-Moonshot while Kimi is the only key).
+# Slot INTENT preserved in comments; swap back to multi-vendor as keys arrive:
+#   pm/judge/builder_b -> anthropic (Sonnet/Opus), architect -> openai (GPT),
+#   realtime -> groq, video -> higgsfield MCP.
 
 slots:
   pm:                                  # the only model the user talks to
-    provider: anthropic
-    model: claude-sonnet-5             # placeholder
-    via: anthropic
+    provider: moonshot
+    model: kimi-k3                     # intent: claude-sonnet-5
+    via: moonshot
   architect:
-    provider: openai
-    model: gpt-5.6-sol                 # placeholder
-    via: openai
-    fallback: claude-opus-5            # placeholder
+    provider: moonshot
+    model: kimi-k3                     # intent: gpt-5.6-sol / claude-opus-5
+    via: moonshot
   builder_a:
     provider: moonshot
-    model: kimi-k3                     # placeholder
+    model: kimi-k2.7-code              # code-specialized — the right builder
     via: moonshot
   builder_b:
-    provider: anthropic
-    model: claude-sonnet-5             # placeholder
-    via: anthropic
-  realtime:                            # news / data / trends feed
-    provider: groq
-    model: groq-fast-latest            # placeholder
-    via: groq
-  judge:                               # verifier LLM (rubric scoring)
-    provider: anthropic
-    model: claude-sonnet-5             # placeholder
-    via: anthropic
-  memorizer:                           # memory distiller — cheapest slot on purpose
     provider: moonshot
-    model: kimi-k3                     # placeholder
+    model: kimi-k2.7-code-highspeed    # fast code variant
+    via: moonshot
+  realtime:                            # intent: groq (fastest news feed)
+    provider: moonshot
+    model: kimi-k2.7-code-highspeed
+    via: moonshot
+  judge:                               # different model than builders on purpose:
+    provider: moonshot                 # avoids self-agreement bias
+    model: kimi-k2.6                   # intent: claude-sonnet-5
+    via: moonshot
+  memorizer:                           # memory distiller — cheapest/fast
+    provider: moonshot
+    model: kimi-k2.7-code-highspeed
+    via: moonshot
+  context:                             # long-context synthesis
+    provider: moonshot                 # intent: google (gemini-3-pro)
+    model: kimi-k3
     via: moonshot
 
-# Router: task class -> ordered candidate slots (cheapest-first preference
-# is applied inside each class using the cost table below).
+# Roles are JOBS; slots above are MODEL bindings. The user preselects the
+# option list per role — the Interface AI picks per task within options
+# (fast, no open-ended deliberation) and logs its reasoning.
+# Intent once keys arrive:
+#   interface: [claude-sonnet-5] · architect: [gpt-5.6-sol, claude-opus-5, gemini-3-pro]
+#   trend: [groq-fast-latest] · context: [gemini-3-pro] · builder: [kimi-k3, claude-sonnet-5]
+roles:
+  interface: { options: [pm], active: pm }
+  architect: { options: [architect], active: architect }
+  trend:     { options: [realtime], active: realtime }
+  context:   { options: [context], active: context }
+  builder:   { options: [builder_a, builder_b], active: builder_a }
+  judge:     { options: [judge], active: judge }
+  memorizer: { options: [memorizer], active: memorizer }
+
 tiers:
   plan:     [architect]
   build:    [builder_a, builder_b]
   critique: [judge]
   fetch:    [realtime]
 
-# Relative cost weights (1.0 = baseline). Router picks the cheapest slot in
-# a class that meets the task's quality floor. Absolute $ estimates come
-# from config/prices.yaml.
 cost_weights:
-  architect: 3.0
+  architect: 2.0
   builder_a: 1.0
-  builder_b: 1.5
-  judge:     1.5
-  realtime:  0.2
+  builder_b: 0.8
+  judge:     1.2
+  realtime:  0.5
   pm:        1.5
-  memorizer: 1.0
+  memorizer: 0.8
 
 asset_studios:
   video:
     type: mcp
-    command: higgsfield-mcp            # Higgsfield via MCP; HIGGSFIELD_API_KEY in .env
+    command: higgsfield-mcp            # placeholder until Higgsfield MCP confirmed
     args: []
   audio:
     type: mcp

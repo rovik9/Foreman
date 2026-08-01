@@ -11,13 +11,12 @@ import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { Store } from "../store/db.js";
 import { createApp } from "./app.js";
 
+const root = resolve(import.meta.dirname, "../../../..");
 try {
-  process.loadEnvFile();
+  process.loadEnvFile(resolve(root, ".env"));
 } catch {
   // no .env yet — providers for missing keys will error clearly at call time
 }
-
-const root = resolve(import.meta.dirname, "../../../..");
 const config = loadConfig(resolve(root, "config"));
 const store = new Store(resolve(root, "foreman.db"));
 const bus = new ForemanBus();

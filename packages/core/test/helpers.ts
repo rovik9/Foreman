@@ -17,6 +17,16 @@ export function makeConfig(dir: string): ForemanConfig {
         judge: { provider: "anthropic", model: "judge-model", via: "anthropic" },
         realtime: { provider: "groq", model: "rt-model", via: "groq" },
         memorizer: { provider: "moonshot", model: "memo-model", via: "moonshot" },
+        context: { provider: "google", model: "ctx-model", via: "google" },
+      },
+      roles: {
+        interface: { options: ["pm"], active: "pm" },
+        architect: { options: ["architect"], active: "architect" },
+        trend: { options: ["realtime"], active: "realtime" },
+        context: { options: ["context"], active: "context" },
+        builder: { options: ["builder_a"], active: "builder_a" },
+        judge: { options: ["judge"], active: "judge" },
+        memorizer: { options: ["memorizer"], active: "memorizer" },
       },
       tiers: {
         plan: ["architect"],
@@ -90,6 +100,10 @@ export const HAPPY_SCRIPT: Record<string, string[]> = {
       constraints: [],
       confidence: 0.95,
       questions: [],
+    }),
+    // memory governance review (documentRun → reviewMemories)
+    JSON.stringify({
+      decisions: [{ index: 0, decision: "approve", reason: "durable preference" }],
     }),
   ],
   "arch-model": [

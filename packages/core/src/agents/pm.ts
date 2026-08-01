@@ -51,7 +51,7 @@ export async function refinePrompt(
 
   const r = await harness.run({
     runId,
-    slot: "pm",
+    slot: harness.roleSlot("interface"),
     role: "pm",
     system: PM_SYSTEM,
     input,

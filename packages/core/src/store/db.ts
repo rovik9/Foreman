@@ -69,6 +69,14 @@ export interface CostRow {
   created_at: string;
 }
 
+export interface ProjectRow {
+  id: string;
+  name: string;
+  slug: string;
+  repo_url: string | null;
+  created_at: string;
+}
+
 const MIGRATIONS: string[] = [
   `
   CREATE TABLE runs (
@@ -163,6 +171,19 @@ const MIGRATIONS: string[] = [
   `,
   `
   ALTER TABLE runs ADD COLUMN product TEXT;
+  `,
+  `
+  CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    repo_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  `,
+  `
+  ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'approved';
+  ALTER TABLE memories ADD COLUMN proposed_by TEXT;
   `,
 ];
 
@@ -406,11 +427,13 @@ export class Store {
     tags?: string[];
     confidence?: number;
     sourceRunId?: string;
+    status?: string;
+    proposedBy?: string;
   }): string {
     const id = randomUUID();
     this.db
       .prepare(
-        "INSERT INTO memories (id, kind, text, tags, confidence, source_run_id) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (id, kind, text, tags, confidence, source_run_id, status, proposed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id,
@@ -419,8 +442,20 @@ export class Store {
         JSON.stringify(m.tags ?? []),
         m.confidence ?? 0.8,
         m.sourceRunId ?? null,
+        m.status ?? "approved",
+        m.proposedBy ?? null,
       );
     return id;
+  }
+
+  setMemoryStatus(id: string, status: string): void {
+    this.db.prepare("UPDATE memories SET status = ? WHERE id = ?").run(status, id);
+  }
+
+  listPendingMemories(): MemoryRow[] {
+    return this.db
+      .prepare("SELECT * FROM memories WHERE status = 'pending' ORDER BY created_at")
+      .all() as MemoryRow[];
   }
 
   /**
@@ -440,7 +475,7 @@ export class Store {
       .prepare(
         `SELECT m.* FROM memories_fts f
          JOIN memories m ON m.rowid = f.rowid
-         WHERE memories_fts MATCH ?
+         WHERE memories_fts MATCH ? AND m.status = 'approved'
          ORDER BY bm25(memories_fts)
          LIMIT ?`,
       )
@@ -466,5 +501,29 @@ export class Store {
     return this.db
       .prepare("SELECT * FROM cost_ledger WHERE run_id = ? ORDER BY id")
       .all(runId) as CostRow[];
+  }
+
+  // ---- projects ----
+
+  createProject(p: { name: string; slug: string; repoUrl?: string }): ProjectRow {
+    const id = randomUUID();
+    this.db
+      .prepare("INSERT INTO projects (id, name, slug, repo_url) VALUES (?, ?, ?, ?)")
+      .run(id, p.name, p.slug, p.repoUrl ?? null);
+    return this.getProject(p.slug);
+  }
+
+  getProject(slug: string): ProjectRow {
+    const row = this.db
+      .prepare("SELECT * FROM projects WHERE slug = ?")
+      .get(slug) as ProjectRow | undefined;
+    if (!row) throw new Error(`project not found: ${slug}`);
+    return row;
+  }
+
+  listProjects(): ProjectRow[] {
+    return this.db
+      .prepare("SELECT * FROM projects ORDER BY created_at DESC")
+      .all() as ProjectRow[];
   }
 }

@@ -6,9 +6,15 @@ import { loadConfig } from "../src/config/load.js";
 
 const VALID_MODELS = `
 slots:
-  pm: { provider: anthropic, model: claude-sonnet-5, via: openrouter }
-  architect: { provider: openai, model: gpt-5.6-sol, via: openrouter, fallback: claude-opus-5 }
-  builder_a: { provider: moonshot, model: kimi-k3, via: openrouter }
+  pm: { provider: anthropic, model: claude-sonnet-5, via: anthropic }
+  architect: { provider: openai, model: gpt-5.6-sol, via: openai, fallback: claude-opus-5 }
+  builder_a: { provider: moonshot, model: kimi-k3, via: moonshot }
+roles:
+  interface: { options: [pm], active: pm }
+  architect: { options: [architect], active: architect }
+  builder: { options: [builder_a], active: builder_a }
+  judge: { options: [pm], active: pm }
+  memorizer: { options: [builder_a], active: builder_a }
 tiers:
   plan: [architect]
   build: [builder_a]
@@ -83,5 +89,35 @@ describe("loadConfig", () => {
   it("rejects a missing models.yaml", () => {
     mkdirSync(dir, { recursive: true });
     expect(() => loadConfig(dir)).toThrow();
+  });
+
+  it("rejects a role whose active slot is not in its options", () => {
+    write(
+      VALID_MODELS.replace(
+        "interface: { options: [pm], active: pm }",
+        "interface: { options: [builder_a], active: pm }",
+      ),
+      VALID_LIMITS,
+    );
+    expect(() => loadConfig(dir)).toThrow(/active slot "pm" is not in its options/);
+  });
+
+  it("rejects a role option referencing an unknown slot", () => {
+    write(
+      VALID_MODELS.replace(
+        "builder: { options: [builder_a], active: builder_a }",
+        "builder: { options: [ghost], active: ghost }",
+      ),
+      VALID_LIMITS,
+    );
+    expect(() => loadConfig(dir)).toThrow(/unknown slot "ghost"/);
+  });
+
+  it("rejects when a required role is missing", () => {
+    write(
+      VALID_MODELS.replace("  judge: { options: [pm], active: pm }\n", ""),
+      VALID_LIMITS,
+    );
+    expect(() => loadConfig(dir)).toThrow(/required role "judge"/);
   });
 });

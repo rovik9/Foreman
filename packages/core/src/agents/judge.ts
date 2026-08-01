@@ -36,7 +36,7 @@ export async function judgeTask(
   const r = await harness.run({
     runId,
     taskId: task.id,
-    slot: "judge",
+    slot: harness.roleSlot("judge"),
     role: "judge",
     system: JUDGE_SYSTEM,
     input: [

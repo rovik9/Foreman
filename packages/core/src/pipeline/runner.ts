@@ -4,8 +4,10 @@ import type { AgentHarness } from "../agents/harness.js";
 import { planTasks } from "../agents/architect.js";
 import { refinePrompt, type PmSpec } from "../agents/pm.js";
 import { buildTask } from "../agents/builder.js";
+import { docTask } from "../agents/doc.js";
 import { judgeTask } from "../agents/judge.js";
 import { getRealtimeFeed } from "../agents/realtime.js";
+import { routeTasks } from "../agents/interface.js";
 import type { ForemanConfig } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
 import { documentRun } from "../journal/document.js";
@@ -78,7 +80,10 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         userMessages.slice(1),
         memory,
       );
-      store.setRunProduct(runId, spec.product);
+      // a project pre-selected at dispatch wins over the PM's suggestion
+      if (!run.product) {
+        store.setRunProduct(runId, spec.product);
+      }
 
       if (
         spec.confidence < limits.pm_clarify_confidence_threshold &&
@@ -116,8 +121,22 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         }
       }
 
-      const drafts = await planTasks(harness, runId, spec, realtimeContext);
-      const router = new Router(config);
+      const drafts = await planTasks(harness, runId, spec, [
+        realtimeContext ? `Realtime context (current as of now):\n${realtimeContext}` : "",
+        memory ? `Shared project memory (read-only):\n${memory}` : "",
+      ].filter(Boolean).join("\n\n") || undefined);
+
+      // the Interface AI routes each task across preselected options,
+      // with logged reasoning; static router is the fallback
+      let slots: Map<string, string>;
+      let reasons = new Map<string, string>();
+      try {
+        ({ slots, reasons } = await routeTasks(harness, runId, drafts, config));
+      } catch {
+        const router = new Router(config);
+        slots = new Map(drafts.map((d) => [d.id, router.pick(d.class)]));
+      }
+
       const idMap = new Map<string, string>();
       for (const [i, d] of drafts.entries()) {
         const row = store.createTask({
@@ -128,7 +147,15 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
           acceptanceCriteria: d.acceptanceCriteria,
           deps: [],
         });
-        store.updateTask(row.id, { slot: router.pick(d.class) });
+        const slot = slots.get(d.id)!;
+        store.updateTask(row.id, { slot });
+        if (reasons.get(d.id)) {
+          store.addMessage({
+            runId,
+            role: "interface",
+            content: `${d.id} → ${slot}: ${reasons.get(d.id)}`,
+          });
+        }
         idMap.set(d.id, row.id);
       }
       // remap deps from architect-local ids to store uuids
@@ -205,25 +232,60 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
           questions: [],
         };
 
-        const built = await buildTask(
-          harness,
-          runId,
-          task,
-          specForBuild,
-          workspace,
-          feedback,
-          recentUserSteering(store, runId),
-        );
+        try {
+          const taskMemory = recallBlock(store, task.description, 4);
+          if (task.class === "build") {
+            const built = await buildTask(
+              harness,
+              runId,
+              task,
+              specForBuild,
+              workspace,
+              feedback,
+              recentUserSteering(store, runId),
+              taskMemory,
+            );
 
-        // register everything the builder produced
-        for (const f of built.files) {
-          store.addArtifact({ runId, taskId: task.id, path: f.path, kind: "code" });
+            // register everything the builder produced
+            for (const f of built.files) {
+              store.addArtifact({ runId, taskId: task.id, path: f.path, kind: "code" });
+              bus.emit({
+                type: "artifact",
+                runId,
+                taskId: task.id,
+                data: { path: f.path, kind: "code" },
+              });
+            }
+          } else {
+            // plan / fetch / critique → markdown document
+            const docPath = await docTask(
+              harness,
+              runId,
+              task,
+              specForBuild,
+              workspace,
+              feedback,
+              recentUserSteering(store, runId),
+              taskMemory,
+            );
+            store.addArtifact({ runId, taskId: task.id, path: docPath, kind: "doc" });
+            bus.emit({
+              type: "artifact",
+              runId,
+              taskId: task.id,
+              data: { path: docPath, kind: "doc" },
+            });
+          }
+        } catch (err) {
+          // a crashed attempt is feedback, not a dead run
+          feedback = `Attempt ${attempt} crashed: ${err instanceof Error ? err.message : String(err)}\nFix the underlying issue and respond in the required format.`;
           bus.emit({
-            type: "artifact",
+            type: "task_status",
             runId,
             taskId: task.id,
-            data: { path: f.path, kind: "code" },
+            data: { status: "retry", attempt, error: feedback.slice(0, 200) },
           });
+          continue;
         }
 
         store.updateTask(task.id, { status: "verifying" });

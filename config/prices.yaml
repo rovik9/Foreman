@@ -1,13 +1,11 @@
 # Price table — USD per 1M tokens: [prompt, completion]
-# Direct provider APIs don't return $ cost per call, so the ledger estimates
-# cost = tokens x price. Keep these current; placeholders until real model IDs land.
+# ROUGH ESTIMATES for Moonshot models — verify against your Moonshot billing
+# page and correct; the ledger and budget caps read from this file.
 
 models:
-  claude-sonnet-5: [3.00, 15.00]       # placeholder
-  claude-opus-5: [15.00, 75.00]        # placeholder
-  gpt-5.6-sol: [10.00, 30.00]          # placeholder
-  kimi-k3: [0.60, 2.50]                # placeholder
-  groq-fast-latest: [0.10, 0.20]       # placeholder
+  kimi-k3: [2.00, 8.00]                 # estimate
+  kimi-k2.7-code: [0.60, 2.50]          # estimate
+  kimi-k2.7-code-highspeed: [0.40, 1.80] # estimate
+  kimi-k2.6: [0.50, 2.00]               # estimate
 
-# fallback for any model not listed above
 default: [1.00, 3.00]

@@ -36,7 +36,7 @@ export class RealtimeFeed {
 
     const r = await this.harness.run({
       runId,
-      slot: "realtime",
+      slot: this.harness.roleSlot("trend"),
       role: "system",
       system: REALTIME_SYSTEM,
       input: `Topic: ${topic}`,

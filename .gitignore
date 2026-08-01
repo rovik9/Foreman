@@ -8,6 +8,6 @@ dist/
 *.db-wal
 *.db-shm
 runs/
-memory/
+/memory/
 .DS_Store
 coverage/

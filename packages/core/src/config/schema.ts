@@ -5,6 +5,7 @@ export const ViaSchema = z.enum([
   "anthropic",
   "openai",
   "moonshot",
+  "google",
   "groq",
   "openrouter", // kept as an escape hatch, not the default path
   "direct",
@@ -29,8 +30,31 @@ export type AssetStudioConfig = z.infer<typeof AssetStudioSchema>;
 export const TaskClassSchema = z.enum(["plan", "build", "critique", "fetch"]);
 export type TaskClass = z.infer<typeof TaskClassSchema>;
 
+/**
+ * Roles are JOBS; slots are MODEL bindings. The user preselects a short
+ * option list per role — the Interface AI picks among options per task
+ * (fast, no open-ended model deliberation) and logs its reasoning.
+ */
+export const RoleNameSchema = z.enum([
+  "interface", // the boss: prompts everyone, routes, approves memory writes
+  "architect", // planning / intelligence / decisions (3 preselected options)
+  "trend",     // trend checker & news verifier
+  "context",   // long-context synthesis (Gemini Pro intent)
+  "builder",
+  "judge",
+  "memorizer",
+]);
+export type RoleName = z.infer<typeof RoleNameSchema>;
+
+export const RoleConfigSchema = z.object({
+  options: z.array(z.string().min(1)).min(1),
+  active: z.string().min(1), // default when the interface doesn't override
+});
+export type RoleConfig = z.infer<typeof RoleConfigSchema>;
+
 export const ModelsConfigSchema = z.object({
   slots: z.record(z.string(), ModelSlotSchema),
+  roles: z.record(RoleNameSchema, RoleConfigSchema),
   tiers: z.record(TaskClassSchema, z.array(z.string().min(1)).min(1)),
   cost_weights: z.record(z.string(), z.number().positive()),
   asset_studios: z.record(z.string(), AssetStudioSchema),

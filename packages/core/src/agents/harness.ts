@@ -1,7 +1,8 @@
-import type { ForemanConfig } from "../config/schema.js";
+import type { ForemanConfig, RoleName } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
 import type { ProviderMap } from "../providers/factory.js";
 import { estimateCostUsd } from "../providers/pricing.js";
+import { resolveRoleSlot } from "../router/router.js";
 import type { Store } from "../store/db.js";
 
 export interface AgentCall {
@@ -34,6 +35,11 @@ export class AgentHarness {
     private readonly bus: ForemanBus,
     private readonly providers: ProviderMap,
   ) {}
+
+  /** The slot currently active for a role (user-preselected default). */
+  roleSlot(role: RoleName): string {
+    return resolveRoleSlot(this.config, role);
+  }
 
   async run(call: AgentCall): Promise<AgentResult> {
     const slotCfg = this.config.models.slots[call.slot];

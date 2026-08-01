@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { distillRun } from "../memory/distiller.js";
+import { reviewMemories } from "../memory/review.js";
 import type { RunnerDeps } from "../pipeline/runner.js";
 import { syncProductRepo } from "./gitsync.js";
 import { renderJournal, writeJournal } from "./journal.js";
@@ -28,9 +29,11 @@ export async function documentRun(
       store.addMessage({
         runId,
         role: "system",
-        content: `Memory: +${added} durable entries`,
+        content: `Memory: +${added} durable entries proposed`,
       });
       deps.bus.emit({ type: "message", runId, data: { role: "memory", added } });
+      // governance: the Interface AI approves writes; critical goes to the user
+      await reviewMemories(harness, store, runId);
     }
   } catch (err) {
     store.addMessage({

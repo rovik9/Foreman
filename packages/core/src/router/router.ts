@@ -1,10 +1,31 @@
-import type { ForemanConfig, TaskClass } from "../config/schema.js";
+import type { ForemanConfig, RoleName, TaskClass } from "../config/schema.js";
+
+const ROLE_FALLBACKS: Record<RoleName, string> = {
+  interface: "pm",
+  architect: "architect",
+  trend: "realtime",
+  context: "context",
+  builder: "builder_a",
+  judge: "judge",
+  memorizer: "memorizer",
+};
+
+/** The slot currently active for a role (user-preselected default). */
+export function resolveRoleSlot(config: ForemanConfig, role: RoleName): string {
+  return config.models.roles[role]?.active ?? ROLE_FALLBACKS[role];
+}
+
+/** Task class -> owning role. The interface routes within the role's options. */
+export const CLASS_TO_ROLE: Record<TaskClass, RoleName> = {
+  plan: "architect",
+  build: "builder",
+  critique: "judge",
+  fetch: "trend",
+};
 
 /**
- * Cost-optimizing router. For each task class it picks the cheapest slot
- * (by cost_weights) that the class allows. Quality floor: classes are
- * curated so every listed slot meets the bar for that work — the cheap
- * models never see a task they can't handle.
+ * Cost-optimizing static router — the fallback when the Interface AI's
+ * routing call is unavailable. Picks the cheapest slot the class allows.
  */
 export class Router {
   constructor(private readonly config: ForemanConfig) {}

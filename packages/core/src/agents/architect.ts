@@ -55,14 +55,14 @@ export async function planTasks(
 ): Promise<TaskDraft[]> {
   const input = [
     `Spec:\n${JSON.stringify(spec, null, 2)}`,
-    extraContext ? `Realtime context (current as of now):\n${extraContext}` : "",
+    extraContext ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");
 
   const r = await harness.run({
     runId,
-    slot: "architect",
+    slot: harness.roleSlot("architect"),
     role: "architect",
     system: ARCHITECT_SYSTEM,
     input,
