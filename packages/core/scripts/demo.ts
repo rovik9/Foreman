@@ -18,21 +18,20 @@ const store = new Store(join(dir, "demo.db"));
 const bus = new ForemanBus();
 
 // canned responses keyed by the model ids in config/models.yaml
+// call order: pm(spec) -> architect(dag) -> interface routing -> builders
+//             -> judge x2 -> memorizer -> interface memory review
 const mock = new MockProvider({
-  "claude-sonnet-5": [
-    // pm
+  "kimi-k3": [
+    // pm: spec
     JSON.stringify({
       summary: "Build a landing page for Foreman",
+      product: "foreman-site",
       requirements: ["Single index.html", "Dark theme", "Hero + features"],
       constraints: [],
       confidence: 0.95,
       questions: [],
     }),
-    // judge (task 1, task 2)
-    JSON.stringify({ score: 0.95, pass: true, feedback: "Meets criteria" }),
-    JSON.stringify({ score: 0.9, pass: true, feedback: "Clean" }),
-  ],
-  "gpt-5.6-sol": [
+    // architect: task DAG
     JSON.stringify({
       tasks: [
         {
@@ -55,8 +54,20 @@ const mock = new MockProvider({
         },
       ],
     }),
+    // interface routing (builder role has two options -> routing engages)
+    JSON.stringify({
+      assignments: [
+        { id: "t1", slot: "builder_a", reason: "semantic markup benefits from the code-specialized model" },
+        { id: "t2", slot: "builder_b", reason: "plain CSS is easy — the highspeed variant is enough" },
+      ],
+    }),
+    // interface memory review
+    JSON.stringify({
+      decisions: [{ index: 0, decision: "approve", reason: "durable preference" }],
+    }),
   ],
-  "kimi-k3": [
+  "kimi-k2.7-code": [
+    // builder_a: index.html
     JSON.stringify({
       files: [
         {
@@ -69,6 +80,9 @@ const mock = new MockProvider({
       ],
       notes: "landing page",
     }),
+  ],
+  "kimi-k2.7-code-highspeed": [
+    // builder_b: style.css
     JSON.stringify({
       files: [
         {
@@ -79,6 +93,22 @@ const mock = new MockProvider({
       ],
       notes: "dark theme",
     }),
+    // memorizer: distilled memories
+    JSON.stringify({
+      memories: [
+        {
+          kind: "preference",
+          text: "User likes dark themes for web pages",
+          tags: ["ui", "style"],
+          confidence: 0.9,
+        },
+      ],
+    }),
+  ],
+  "kimi-k2.6": [
+    // judge: verdicts
+    JSON.stringify({ score: 0.95, pass: true, feedback: "Meets criteria" }),
+    JSON.stringify({ score: 0.9, pass: true, feedback: "Clean" }),
   ],
 });
 
