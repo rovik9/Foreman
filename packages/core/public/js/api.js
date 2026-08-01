@@ -21,8 +21,12 @@ export const api = {
     req(`/runs/${runId}/chat`, { method: "POST", body: JSON.stringify({ message }) }),
   acceptRun: (runId) => req(`/runs/${runId}/accept`, { method: "POST" }),
   listProjects: () => req("/projects"),
-  createProject: (name, repo_url) =>
-    req("/projects", { method: "POST", body: JSON.stringify({ name, repo_url }) }),
+  createProject: (payload) =>
+    req("/projects", { method: "POST", body: JSON.stringify(payload) }),
+  deleteProject: (slug) =>
+    fetch(`/projects/${slug}`, { method: "DELETE" }).then((r) => {
+      if (!r.ok) throw new Error(`${r.status}`);
+    }),
   listMemories: () => req("/memories"),
   decideMemory: (id, decision) =>
     req(`/memories/${id}/decision`, { method: "POST", body: JSON.stringify({ decision }) }),

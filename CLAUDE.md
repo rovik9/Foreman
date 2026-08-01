@@ -85,16 +85,38 @@ POST /runs/:id/chat   {message}                   -> resume/steer
 POST /runs/:id/accept                             -> {committed, pushed, error?}
 GET  /runs/:id/files/*             workspace files (media inline-previewable)
 GET  /projects                     ProjectRow[]
-POST /projects        {name, repo_url?}           -> 201 ProjectRow | 409
+POST /projects        {name, memory_dir?, memory_repo?, workspace_dirs?[], code_repos?[]}
+                                   -> 201 ProjectRow | 409 duplicate
+DELETE /projects/:slug                            -> 204 | 404
 GET  /memories                     MemoryRow[] (status: approved|pending|awaiting_user|rejected)
 POST /memories/:id/decision {decision: approve|reject}
 ```
+
+ProjectRow: `{id, name, slug, memory_dir, memory_repo, workspace_dirs (JSON[]), code_repos (JSON[]), created_at}`
 
 SSE events (`{type, runId, taskId?, data, at}`):
 `run_status` (running/planned/awaiting_user/paused_budget/completed/failed/stopped) ·
 `task_status` (running/verifying/passed/escalated/retry) · `agent_call` (slot, model,
 phase, costUsd) · `gate` (deterministic verifier results) · `judge` (score, pass,
 feedback) · `cost` (runTotalUsd) · `message` · `artifact` (path, kind).
+
+## Layout (user-specified)
+
+- **Collapsable left sidebar** (`#sidebar`, toggled by `#sidebar-toggle`) containing:
+  - **Projects panel** — list with add (+) and per-project remove (×, confirm first).
+    Removing a project must NOT delete its memory repo on disk.
+  - **Runs panel** — filtered by the active project; "All projects" clears the filter.
+- **New-project modal** (`#project-modal`, native `<dialog>`) with fields:
+  project name · memory local folder · memory git repo URL · dynamic list of
+  project local folders (user adds N) · dynamic list of code git repos
+  (one for monorepo, many otherwise). Structure is final — style it.
+- Header: brand, run context + status pill, cost meter, Accept & Push.
+- Dispatch bar under header. Right dock: tasks / assets / chat / memory.
+- Visual reference: (pending — user to supply "look like ___")
+
+## Requests for the engine
+
+(append here if you need backend changes — none yet)
 
 ## Run states the UI must render distinctly
 

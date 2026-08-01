@@ -73,7 +73,11 @@ export interface ProjectRow {
   id: string;
   name: string;
   slug: string;
-  repo_url: string | null;
+  repo_url: string | null; // legacy alias of memory_repo
+  memory_dir: string | null;
+  memory_repo: string | null;
+  workspace_dirs: string; // JSON string[]
+  code_repos: string; // JSON string[]
   created_at: string;
 }
 
@@ -184,6 +188,12 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'approved';
   ALTER TABLE memories ADD COLUMN proposed_by TEXT;
+  `,
+  `
+  ALTER TABLE projects ADD COLUMN memory_dir TEXT;
+  ALTER TABLE projects ADD COLUMN memory_repo TEXT;
+  ALTER TABLE projects ADD COLUMN workspace_dirs TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE projects ADD COLUMN code_repos TEXT NOT NULL DEFAULT '[]';
   `,
 ];
 
@@ -505,12 +515,37 @@ export class Store {
 
   // ---- projects ----
 
-  createProject(p: { name: string; slug: string; repoUrl?: string }): ProjectRow {
+  createProject(p: {
+    name: string;
+    slug: string;
+    repoUrl?: string;
+    memoryDir?: string;
+    memoryRepo?: string;
+    workspaceDirs?: string[];
+    codeRepos?: string[];
+  }): ProjectRow {
     const id = randomUUID();
     this.db
-      .prepare("INSERT INTO projects (id, name, slug, repo_url) VALUES (?, ?, ?, ?)")
-      .run(id, p.name, p.slug, p.repoUrl ?? null);
+      .prepare(
+        `INSERT INTO projects (id, name, slug, repo_url, memory_dir, memory_repo, workspace_dirs, code_repos)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        p.name,
+        p.slug,
+        p.memoryRepo ?? p.repoUrl ?? null,
+        p.memoryDir ?? null,
+        p.memoryRepo ?? p.repoUrl ?? null,
+        JSON.stringify(p.workspaceDirs ?? []),
+        JSON.stringify(p.codeRepos ?? []),
+      );
     return this.getProject(p.slug);
+  }
+
+  deleteProject(slug: string): boolean {
+    const r = this.db.prepare("DELETE FROM projects WHERE slug = ?").run(slug);
+    return r.changes > 0;
   }
 
   getProject(slug: string): ProjectRow {

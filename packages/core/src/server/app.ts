@@ -67,8 +67,15 @@ export function createApp(deps: RunnerDeps): Hono {
 
   app.post("/projects", async (c) => {
     const body = await c.req
-      .json<{ name?: string; repo_url?: string }>()
-      .catch((): { name?: string; repo_url?: string } => ({}));
+      .json<{
+        name?: string;
+        repo_url?: string; // legacy alias of memory_repo
+        memory_dir?: string;
+        memory_repo?: string;
+        workspace_dirs?: string[];
+        code_repos?: string[];
+      }>()
+      .catch(() => ({}) as Record<string, never>);
     if (!body.name?.trim()) return c.json({ error: "name required" }, 400);
 
     let slug: string;
@@ -84,11 +91,11 @@ export function createApp(deps: RunnerDeps): Hono {
       // not found — good
     }
 
-    // remote: user-pasted URL wins; else auto-create via GitHub token
-    let repoUrl = body.repo_url?.trim() || undefined;
-    if (!repoUrl && process.env.GITHUB_TOKEN) {
+    // memory remote: explicit URL wins; else auto-create via GitHub token
+    let memoryRepo = body.memory_repo?.trim() || body.repo_url?.trim() || undefined;
+    if (!memoryRepo && process.env.GITHUB_TOKEN) {
       try {
-        repoUrl = await githubCreateRepo(process.env.GITHUB_TOKEN, `${slug}-memory`);
+        memoryRepo = await githubCreateRepo(process.env.GITHUB_TOKEN, `${slug}-memory`);
       } catch (err) {
         return c.json(
           { error: `github: ${err instanceof Error ? err.message : String(err)}` },
@@ -97,19 +104,30 @@ export function createApp(deps: RunnerDeps): Hono {
       }
     }
 
-    const project = store.createProject({ name: body.name.trim(), slug, repoUrl });
+    const project = store.createProject({
+      name: body.name.trim(),
+      slug,
+      memoryDir: body.memory_dir?.trim() || undefined,
+      memoryRepo,
+      workspaceDirs: body.workspace_dirs ?? [],
+      codeRepos: body.code_repos ?? [],
+    });
     if (deps.memoryDir) {
       scaffoldProjectRepo(deps.memoryDir, slug);
-      // remote configured later if one exists — first push happens on accept
-      if (repoUrl) {
+      if (memoryRepo) {
         syncProductRepo(
           join(deps.memoryDir, "products", slug),
           "project created",
-          repoUrl,
+          memoryRepo,
         );
       }
     }
-    return c.json({ ...project, repo_url: repoUrl ?? null }, 201);
+    return c.json(project, 201);
+  });
+
+  app.delete("/projects/:slug", (c) => {
+    const removed = store.deleteProject(c.req.param("slug"));
+    return removed ? c.body(null, 204) : c.json({ error: "not found" }, 404);
   });
 
   app.post("/runs/:id/accept", (c) => {

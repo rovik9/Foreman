@@ -11,9 +11,8 @@
        Panels are plain <section> regions with stable IDs — restyle freely,
        do not rename IDs (js/components bind to them). -->
   <header id="topbar">
+    <button id="sidebar-toggle" title="Toggle sidebar">☰</button>
     <div id="brand">FOREMAN</div>
-    <select id="project-switcher" title="Active project"></select>
-    <button id="new-project-btn">+ Project</button>
     <div id="run-context">
       <span id="run-label">no run</span>
       <span id="run-status-pill" class="pill"></span>
@@ -28,9 +27,18 @@
   </div>
 
   <main id="layout">
-    <aside id="runs-panel">
-      <h3 class="panel-title">Runs</h3>
-      <div id="runs-list"></div>
+    <aside id="sidebar">
+      <section id="projects-panel">
+        <div class="panel-head">
+          <h3 class="panel-title">Projects</h3>
+          <button id="new-project-btn" title="New project">+</button>
+        </div>
+        <div id="projects-list"></div>
+      </section>
+      <section id="runs-panel">
+        <h3 class="panel-title">Runs</h3>
+        <div id="runs-list"></div>
+      </section>
     </aside>
 
     <section id="stage">
@@ -61,6 +69,36 @@
       </section>
     </aside>
   </main>
+
+  <!-- New-project modal: structure final, styling is Claude Code's. -->
+  <dialog id="project-modal">
+    <form id="project-form" method="dialog">
+      <h3 class="panel-title">New project</h3>
+      <label>Project name
+        <input id="pf-name" required placeholder="Rovik Capital">
+      </label>
+      <label>Memory — local folder (blank = default vault)
+        <input id="pf-memory-dir" placeholder="~/foreman-memory/rovik-capital">
+      </label>
+      <label>Memory — git repo URL (blank = auto-create via GITHUB_TOKEN)
+        <input id="pf-memory-repo" placeholder="git@github.com:rovik/rovik-capital-memory.git">
+      </label>
+      <fieldset id="pf-workspaces">
+        <legend>Project local folders (workspaces)</legend>
+        <div id="pf-workspace-list"></div>
+        <button type="button" id="pf-add-workspace">+ add folder</button>
+      </fieldset>
+      <fieldset id="pf-repos">
+        <legend>Code git repos (one for monorepo, many otherwise)</legend>
+        <div id="pf-repo-list"></div>
+        <button type="button" id="pf-add-repo">+ add repo</button>
+      </fieldset>
+      <div class="modal-actions">
+        <button type="button" id="pf-cancel">Cancel</button>
+        <button type="submit" id="pf-create">Create project</button>
+      </div>
+    </form>
+  </dialog>
 
   <script type="module" src="/js/app.js"></script>
 </body>
