@@ -1,0 +1,20 @@
+# Hard caps — the referee for auto-iteration. Non-negotiable.
+
+max_iterations_per_task: 5        # builder retries before escalation to user
+max_cost_per_run_usd: 5.00        # whole-run budget; exceeded -> run pauses + escalates
+max_cost_per_task_usd: 1.00       # per-task budget
+max_parallel_builders: 3
+pm_clarify_confidence_threshold: 0.7   # below this, PM asks the user before planning
+judge_pass_score: 0.85            # rubric score needed for verifier pass
+sandbox:
+  workspace_root: runs            # builders may only write under runs/<run_id>/workspace
+  shell_allowlist:                # commands the verifier may execute
+    - pnpm
+    - npm
+    - npx
+    - node
+    - tsc
+    - eslint
+    - vitest
+    - forge      # Foundry (Phase 4)
+    - slither    # Phase 4

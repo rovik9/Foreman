@@ -1,0 +1,59 @@
+# Foreman model registry.
+# Every model is a swappable SLOT. Wire real model IDs when you have keys;
+# OpenRouter covers most providers behind one API key.
+
+slots:
+  pm:                                  # the only model the user talks to
+    provider: anthropic
+    model: claude-sonnet-5             # placeholder
+    via: openrouter
+  architect:
+    provider: openai
+    model: gpt-5.6-sol                 # placeholder
+    via: openrouter
+    fallback: claude-opus-5            # placeholder
+  builder_a:
+    provider: moonshot
+    model: kimi-k3                     # placeholder
+    via: openrouter
+  builder_b:
+    provider: anthropic
+    model: claude-sonnet-5             # placeholder
+    via: openrouter
+  realtime:                            # news / data / trends feed
+    provider: groq
+    model: groq-fast-latest            # placeholder
+    via: groq-direct                   # latency-critical: direct SDK
+  judge:                               # verifier LLM (rubric scoring)
+    provider: anthropic
+    model: claude-sonnet-5             # placeholder
+    via: openrouter
+
+# Router: task class -> ordered candidate slots (cheapest-first preference
+# is applied inside each class using the cost table below).
+tiers:
+  plan:     [architect]
+  build:    [builder_a, builder_b]
+  critique: [judge]
+  fetch:    [realtime]
+
+# Relative cost weights (1.0 = baseline). Router picks the cheapest slot in
+# a class that meets the task's quality floor. Real $/token prices are
+# recorded per-call from provider usage responses.
+cost_weights:
+  architect: 3.0
+  builder_a: 1.0
+  builder_b: 1.5
+  judge:     1.5
+  realtime:  0.2
+  pm:        1.5
+
+asset_studios:
+  video:
+    type: mcp
+    command: higgsfield-mcp            # placeholder until MCP server confirmed
+    args: []
+  audio:
+    type: mcp
+    command: audio-mcp                 # placeholder
+    args: []
