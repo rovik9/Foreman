@@ -5,6 +5,7 @@ import {
   ForemanConfig,
   LimitsConfigSchema,
   ModelsConfigSchema,
+  PricesConfigSchema,
   type ModelsConfig,
 } from "./schema.js";
 
@@ -43,5 +44,17 @@ export function loadConfig(configDir: string): ForemanConfig {
   validateRegistry(models);
   const limits = LimitsConfigSchema.parse(limitsRaw);
 
-  return { models, limits };
+  // prices.yaml is optional — without it, costs estimate to $0 and the
+  // budget caps run blind, so we warn loudly instead of failing.
+  let prices = PricesConfigSchema.parse({ models: {} });
+  try {
+    prices = PricesConfigSchema.parse(
+      parseYaml(readFileSync(join(configDir, "prices.yaml"), "utf8")),
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    console.warn("config/prices.yaml not found — cost estimates will be $0");
+  }
+
+  return { models, limits, prices };
 }

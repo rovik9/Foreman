@@ -122,15 +122,26 @@ foreman/
 3. Asset studio: MCP clients for Higgsfield (video) + audio MCP; artifacts stream to AssetPreview mid-run.
 4. Run history browser + resume/retry in UI.
 
-## Phase 2.5 — DM gateway (the travel unlock)
+## Phase 2.5 — DM gateway: Telegram + Discord (the travel unlock)
 Run Foreman as a launchd service on the home PC; full control from your phone.
-1. Telegram bot adapter (Bot API — free, 5 min via @BotFather). Long-polling, no public endpoint needed (works behind home NAT).
-2. **Pairing/authz first, non-negotiable:** bot responds only to your allowlisted Telegram user ID; everyone else gets nothing. (Pattern: `gateway/pairing.py`, `authz_mixin.py` in Hermes.)
-3. PM bridging: your DMs route to the PM agent; PM replies, status updates, and escalation questions stream back.
-4. Approval UX: escalation messages carry inline buttons — Approve / Iterate / Stop / Budget+ — mapped to run controls.
-5. Asset delivery: generated video/audio/images sent as native Telegram media; big files get a link to the home machine.
-6. Delivery ledger: outbound messages persisted + retried on failure (pattern: `gateway/delivery_ledger.py`).
-7. Later adapters (same base class): WhatsApp Cloud API, Signal, Discord. (Reference: `gateway/platforms/`.)
+Shared adapter base (pattern: Hermes `gateway/platforms/base.py`) — one message
+router, N platform adapters. Both behind pairing/authz.
+
+1. **Adapter base + message router:** platform-agnostic inbound/outbound queue;
+   a run is addressable on any connected platform. Delivery ledger persisted +
+   retried (pattern: `gateway/delivery_ledger.py`).
+2. **Pairing/authz first, non-negotiable:** respond only to allowlisted user IDs
+   per platform; everyone else gets nothing. (Pattern: `gateway/pairing.py`.)
+3. **Telegram adapter** (Bot API, long-polling — no public endpoint): PM DMs,
+   escalation questions, inline buttons — Approve / Iterate / Stop / Budget+ —
+   asset delivery as native media.
+4. **Discord adapter** (bot token, websocket gateway — no public endpoint):
+   each run gets its own **thread** in a private channel = live build log per
+   project; slash commands (/run, /status, /stop, /approve); button components;
+   file uploads (25MB) for video/audio assets.
+5. PM bridging: messages from either platform route to the PM agent; replies,
+   status, and escalations fan out to whichever platform the run started on
+   (or both, if linked).
 
 ## Phase 3 — Editor
 1. VS Code extension: embeds mission-control webview, opens run workspace, inline diffs.

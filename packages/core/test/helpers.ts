@@ -25,6 +25,15 @@ export function makeConfig(workspaceRoot: string): ForemanConfig {
       cost_weights: {},
       asset_studios: {},
     },
+    prices: {
+      models: {
+        "pm-model": [3.0, 15.0],
+        "arch-model": [10.0, 30.0],
+        "build-model": [0.6, 2.5],
+        "judge-model": [3.0, 15.0],
+      },
+      default: [1.0, 3.0],
+    },
     limits: {
       max_iterations_per_task: 3,
       max_cost_per_run_usd: 5,

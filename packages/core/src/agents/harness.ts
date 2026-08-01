@@ -1,6 +1,7 @@
 import type { ForemanConfig } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
 import type { ProviderMap } from "../providers/factory.js";
+import { estimateCostUsd } from "../providers/pricing.js";
 import type { Store } from "../store/db.js";
 
 export interface AgentCall {
@@ -67,6 +68,17 @@ export class AgentHarness {
       { model: slotCfg.model, maxTokens: call.maxTokens },
     );
 
+    // provider-reported cost wins; otherwise estimate from the price table
+    const costUsd =
+      result.costUsd > 0
+        ? result.costUsd
+        : estimateCostUsd(
+            result.model,
+            result.promptTokens,
+            result.completionTokens,
+            this.config.prices,
+          );
+
     this.store.addCost({
       runId: call.runId,
       taskId: call.taskId,
@@ -74,7 +86,7 @@ export class AgentHarness {
       model: result.model,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
-      costUsd: result.costUsd,
+      costUsd,
     });
     this.store.addMessage({
       runId: call.runId,
@@ -91,7 +103,7 @@ export class AgentHarness {
         slot: call.slot,
         model: result.model,
         phase: "done",
-        costUsd: result.costUsd,
+        costUsd,
       },
     });
     this.bus.emit({
@@ -104,7 +116,7 @@ export class AgentHarness {
     return {
       output: result.content,
       model: result.model,
-      costUsd: result.costUsd,
+      costUsd,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
     };

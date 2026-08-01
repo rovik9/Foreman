@@ -1,0 +1,13 @@
+# Price table — USD per 1M tokens: [prompt, completion]
+# Direct provider APIs don't return $ cost per call, so the ledger estimates
+# cost = tokens x price. Keep these current; placeholders until real model IDs land.
+
+models:
+  claude-sonnet-5: [3.00, 15.00]       # placeholder
+  claude-opus-5: [15.00, 75.00]        # placeholder
+  gpt-5.6-sol: [10.00, 30.00]          # placeholder
+  kimi-k3: [0.60, 2.50]                # placeholder
+  groq-fast-latest: [0.10, 0.20]       # placeholder
+
+# fallback for any model not listed above
+default: [1.00, 3.00]

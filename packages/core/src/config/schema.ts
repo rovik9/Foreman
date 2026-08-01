@@ -1,7 +1,14 @@
 import { z } from "zod";
 
-/** How a slot reaches its provider. */
-export const ViaSchema = z.enum(["openrouter", "groq-direct", "direct"]);
+/** How a slot reaches its provider. Direct keys only — one adapter per vendor. */
+export const ViaSchema = z.enum([
+  "anthropic",
+  "openai",
+  "moonshot",
+  "groq",
+  "openrouter", // kept as an escape hatch, not the default path
+  "direct",
+]);
 export type Via = z.infer<typeof ViaSchema>;
 
 export const ModelSlotSchema = z.object({
@@ -43,7 +50,19 @@ export const LimitsConfigSchema = z.object({
 });
 export type LimitsConfig = z.infer<typeof LimitsConfigSchema>;
 
+/** USD per 1M tokens: [prompt, completion]. */
+export const PricePairSchema = z.tuple([
+  z.number().nonnegative(),
+  z.number().nonnegative(),
+]);
+export const PricesConfigSchema = z.object({
+  models: z.record(z.string(), PricePairSchema),
+  default: PricePairSchema.default([0, 0]),
+});
+export type PricesConfig = z.infer<typeof PricesConfigSchema>;
+
 export interface ForemanConfig {
   models: ModelsConfig;
   limits: LimitsConfig;
+  prices: PricesConfig;
 }
