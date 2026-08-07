@@ -606,6 +606,17 @@ export class Store {
     return r.changes > 0;
   }
 
+  /** Appends local checkout paths (e.g. from a fresh clone) to a project's workspace_dirs. */
+  addWorkspaceDirs(slug: string, dirs: string[]): void {
+    if (dirs.length === 0) return;
+    const project = this.getProject(slug);
+    const existing = JSON.parse(project.workspace_dirs) as string[];
+    const merged = [...new Set([...existing, ...dirs])];
+    this.db
+      .prepare("UPDATE projects SET workspace_dirs = ? WHERE slug = ?")
+      .run(JSON.stringify(merged), slug);
+  }
+
   projectCost(slug: string): number {
     const row = this.db
       .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS total FROM runs WHERE product = ?")

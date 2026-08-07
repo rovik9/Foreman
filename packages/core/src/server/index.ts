@@ -29,6 +29,7 @@ const runnerDeps: RunnerDeps = {
   bus,
   harness,
   memoryDir: resolve(root, config.memory.mirror_dir),
+  projectsDir: resolve(root, "projects"),
 };
 
 const app = createApp(runnerDeps);

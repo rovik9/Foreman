@@ -81,13 +81,28 @@ function bindFsPicker() {
   });
 }
 
-// ---- repo rows — live git ls-remote validation, since these are usually private ----
+// ---- repo rows — live git ls-remote validation, since these are usually private.
+// Modular auth: system (ambient git identity, default) / ssh_key / token — see
+// server/git-auth.ts, the single place that knows how to turn these into a
+// real git invocation. Nothing here is persisted; it's used for this request only.
 
 function repoRow(placeholder) {
-  const row = document.createElement("div");
-  row.className = "pf-repo-row";
-  row.innerHTML = `<input class="pf-repo-input" placeholder="${esc(placeholder)}"><span class="pf-repo-status"></span>`;
-  return row;
+  const block = document.createElement("div");
+  block.className = "pf-repo-block";
+  block.innerHTML = `
+    <div class="pf-repo-row">
+      <input class="pf-repo-input" placeholder="${esc(placeholder)}">
+      <span class="pf-repo-status"></span>
+    </div>
+    <div class="pf-repo-auth">
+      <select class="pf-repo-auth-method">
+        <option value="system">System git (default)</option>
+        <option value="ssh_key">SSH key…</option>
+        <option value="token">Token…</option>
+      </select>
+      <div class="pf-repo-auth-field"></div>
+    </div>`;
+  return block;
 }
 
 function folderRow(placeholder) {
@@ -97,16 +112,43 @@ function folderRow(placeholder) {
   return row;
 }
 
-async function checkRepoRow(input) {
-  const status = input.closest(".pf-repo-row").querySelector(".pf-repo-status");
+function renderRepoAuthField(block) {
+  const method = block.querySelector(".pf-repo-auth-method").value;
+  const field = block.querySelector(".pf-repo-auth-field");
+  if (method === "ssh_key") {
+    field.innerHTML = `<div class="pf-path-row"><input class="pf-repo-ssh-key" placeholder="~/.ssh/id_ed25519"><button type="button" class="pf-browse">Browse&hellip;</button></div>`;
+  } else if (method === "token") {
+    field.innerHTML = `<input class="pf-repo-token" type="password" placeholder="personal access token">`;
+  } else {
+    field.innerHTML = "";
+  }
+}
+
+function repoCredential(block) {
+  const method = block.querySelector(".pf-repo-auth-method").value;
+  if (method === "ssh_key") {
+    const keyPath = block.querySelector(".pf-repo-ssh-key")?.value.trim();
+    return keyPath ? { method: "ssh_key", keyPath } : undefined;
+  }
+  if (method === "token") {
+    const token = block.querySelector(".pf-repo-token")?.value.trim();
+    return token ? { method: "token", token } : undefined;
+  }
+  return undefined;
+}
+
+async function checkRepoRow(block) {
+  const input = block.querySelector(".pf-repo-input");
+  const status = block.querySelector(".pf-repo-status");
   const url = input.value.trim();
   if (!url) { status.textContent = ""; status.className = "pf-repo-status"; return; }
   status.textContent = "checking…";
   status.className = "pf-repo-status checking";
   try {
-    const result = await api.checkRepo(url);
+    const result = await api.checkRepo(url, repoCredential(block));
     status.textContent = result.ok ? "connected" : result.error;
     status.className = `pf-repo-status ${result.ok ? "ok" : "err"}`;
+    if (!result.ok) status.title = result.error;
   } catch {
     status.textContent = "check failed";
     status.className = "pf-repo-status err";
@@ -142,7 +184,16 @@ function bindModal(refreshAll) {
   monorepo.addEventListener("change", renderRepoInputs);
   repoCount.addEventListener("input", renderRepoInputs);
   repoInputs.addEventListener("focusout", (e) => {
-    if (e.target.classList.contains("pf-repo-input")) checkRepoRow(e.target);
+    if (e.target.matches(".pf-repo-input, .pf-repo-token, .pf-repo-ssh-key")) {
+      checkRepoRow(e.target.closest(".pf-repo-block"));
+    }
+  });
+  repoInputs.addEventListener("change", (e) => {
+    if (e.target.classList.contains("pf-repo-auth-method")) {
+      const block = e.target.closest(".pf-repo-block");
+      renderRepoAuthField(block);
+      checkRepoRow(block);
+    }
   });
 
   bindFsPicker();
@@ -159,6 +210,17 @@ function bindModal(refreshAll) {
   document.getElementById("project-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const val = (id) => document.getElementById(id).value.trim();
+
+    const code_repos = [];
+    const credentials = {};
+    for (const block of document.querySelectorAll(".pf-repo-block")) {
+      const url = block.querySelector(".pf-repo-input").value.trim();
+      if (!url) continue;
+      code_repos.push(url);
+      const cred = repoCredential(block);
+      if (cred) credentials[url] = cred;
+    }
+
     const payload = {
       name: val("pf-name"),
       memory_dir: val("pf-memory-dir") || undefined,
@@ -166,14 +228,21 @@ function bindModal(refreshAll) {
       monorepo: monorepo.checked,
       workspace_dirs: [...document.querySelectorAll(".pf-folder-path")]
         .map((el) => el.value.trim()).filter(Boolean),
-      code_repos: [...document.querySelectorAll(".pf-repo-input")]
-        .map((el) => el.value.trim()).filter(Boolean),
+      code_repos,
+      credentials,
     };
     try {
-      await api.createProject(payload);
+      const result = await api.createProject(payload);
       modal.classList.add("hidden");
       e.target.reset();
       await refreshAll();
+      const failed = (result.clone_results || []).filter((r) => !r.ok);
+      if (failed.length) {
+        window.alert(
+          `Project created, but ${failed.length} repo clone(s) failed:\n` +
+          failed.map((f) => `${f.url}\n  ${f.error}`).join("\n"),
+        );
+      }
     } catch (err) {
       window.alert(`Could not create project: ${err.message}`);
     }

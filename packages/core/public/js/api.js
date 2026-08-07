@@ -33,6 +33,6 @@ export const api = {
     req(`/memories/${id}/decision`, { method: "POST", body: JSON.stringify({ decision }) }),
   fileUrl: (runId, path) => `/runs/${runId}/files/${path}`,
   listDir: (path) => req(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  checkRepo: (url) =>
-    req("/fs/check-repo", { method: "POST", body: JSON.stringify({ url }) }),
+  checkRepo: (url, credential) =>
+    req("/fs/check-repo", { method: "POST", body: JSON.stringify({ url, credential }) }),
 };

@@ -392,7 +392,10 @@ a:hover { text-decoration: underline; }
 }
 .pf-browse:hover { color: var(--text); }
 
-#pf-repo-inputs { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+#pf-repo-inputs { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.pf-repo-block {
+  padding: 8px; border: 1px solid var(--glass-border); border-radius: var(--r-sm); background: rgba(255,255,255,.015);
+}
 .pf-repo-row { display: flex; align-items: center; gap: 8px; }
 .pf-repo-row input {
   flex: 1; background: var(--bg-1); color: var(--text); border: 1px solid var(--glass-border);
@@ -402,6 +405,18 @@ a:hover { text-decoration: underline; }
 .pf-repo-status.checking { color: var(--text-3); }
 .pf-repo-status.ok { color: var(--ok); }
 .pf-repo-status.err { color: var(--err); cursor: help; }
+
+.pf-repo-auth { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.pf-repo-auth-method {
+  flex: none; background: transparent; color: var(--text-3); border: 1px solid var(--glass-border);
+  border-radius: var(--r-xs); padding: 5px 6px; font: 510 11px var(--font); cursor: pointer;
+}
+.pf-repo-auth-field { flex: 1; }
+.pf-repo-auth-field input[type="password"] {
+  width: 100%; background: var(--bg-1); color: var(--text); border: 1px solid var(--glass-border);
+  border-radius: var(--r-xs); padding: 7px 9px; font: inherit; letter-spacing: 0.06em;
+}
+.pf-repo-auth-field .pf-path-row { margin: 0; }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal-actions button { border-radius: var(--r-sm); padding: 9px 16px; font: 700 12.5px var(--font); cursor: pointer; border: 0; }

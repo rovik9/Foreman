@@ -4,10 +4,17 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
+import type { GitCredential } from "./git-auth.js";
 import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
-import { checkRepoAccess, listDirectories } from "./fs.js";
+import { checkRepoAccess, cloneRepo, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
+
+function repoBasename(url: string): string {
+  const cleaned = url.replace(/\.git$/, "").replace(/\/+$/, "");
+  const name = cleaned.split(/[/:]/).pop() || "repo";
+  return name.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 60) || "repo";
+}
 
 /** Static mission-control app (Claude Code owns everything under public/). */
 const PUBLIC_DIR = resolve(import.meta.dirname, "../../public");
@@ -84,10 +91,10 @@ export function createApp(deps: RunnerDeps): Hono {
 
   app.post("/fs/check-repo", async (c) => {
     const body = await c.req
-      .json<{ url?: string }>()
-      .catch((): { url?: string } => ({}));
+      .json<{ url?: string; credential?: GitCredential }>()
+      .catch((): { url?: string; credential?: GitCredential } => ({}));
     if (!body.url?.trim()) return c.json({ error: "url required" }, 400);
-    return c.json(await checkRepoAccess(body.url.trim()));
+    return c.json(await checkRepoAccess(body.url.trim(), body.credential));
   });
 
   app.get("/projects", (c) =>
@@ -115,6 +122,7 @@ export function createApp(deps: RunnerDeps): Hono {
         workspace_dirs?: string[];
         code_repos?: string[];
         monorepo?: boolean;
+        credentials?: Record<string, GitCredential>;
       }>()
       .catch(() => ({}) as Record<string, never>);
     if (!body.name?.trim()) return c.json({ error: "name required" }, 400);
@@ -145,7 +153,7 @@ export function createApp(deps: RunnerDeps): Hono {
       }
     }
 
-    const project = store.createProject({
+    store.createProject({
       name: body.name.trim(),
       slug,
       memoryDir: body.memory_dir?.trim() || undefined,
@@ -164,7 +172,26 @@ export function createApp(deps: RunnerDeps): Hono {
         );
       }
     }
-    return c.json(project, 201);
+
+    // real, proof-of-connectivity clone per code repo — best-effort, never
+    // blocks project creation (same posture as GitHub auto-repo-create above)
+    const cloneResults: { url: string; ok: boolean; path?: string; error?: string }[] = [];
+    if (body.code_repos?.length && deps.projectsDir) {
+      const cloned: string[] = [];
+      for (const url of body.code_repos) {
+        const dest = join(deps.projectsDir, slug, repoBasename(url));
+        const result = await cloneRepo(url, dest, body.credentials?.[url]);
+        if (result.ok) {
+          cloned.push(result.path);
+          cloneResults.push({ url, ok: true, path: result.path });
+        } else {
+          cloneResults.push({ url, ok: false, error: result.error });
+        }
+      }
+      store.addWorkspaceDirs(slug, cloned);
+    }
+
+    return c.json({ ...store.getProject(slug), clone_results: cloneResults }, 201);
   });
 
   app.delete("/projects/:slug", (c) => {

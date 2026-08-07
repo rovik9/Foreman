@@ -26,6 +26,8 @@ export interface RunnerDeps {
   harness: AgentHarness;
   /** Local memory vault root (from config.memory.mirror_dir, resolved). */
   memoryDir?: string;
+  /** Root under which project code repos get cloned (server/app.ts POST /projects). */
+  projectsDir?: string;
 }
 
 const REALTIME_TRIGGER =

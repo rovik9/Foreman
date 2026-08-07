@@ -45,8 +45,13 @@ No build step — vanilla HTML/CSS/ES modules, no bundler, no frameworks. Serve 
 - **Footer**: single input, dual purpose — Dispatch always starts a new run; Steer (appears
   once a run is active) sends a chat message to it; Stop and Accept & Push appear based on
   run status.
-- **New-project modal**: name, memory local folder, memory git repo URL, monorepo checkbox,
-  dynamic local-folder list, comma-separated code repos.
+- **New-project modal**: name, memory local folder (+ Browse via the server-driven folder
+  picker), memory git repo URL, monorepo checkbox (checked → one repo field; unchecked → "how
+  many repos?" → that many named fields), dynamic local-folder list, and per-repo credential
+  selector (System git / SSH key / Token) with live `git ls-remote` validation as you type.
+  On submit, every code repo is actually cloned (shallow) into `projects/<slug>/<name>/` and
+  the checkout path is appended to the project's workspace_dirs — proof of connectivity, not
+  just a stored URL string.
 
 ### Design tokens (`css/app.css` `:root`)
 
@@ -73,12 +78,23 @@ POST /runs/:id/budget {add_usd}                             -> {ok, budget_raise
 POST /runs/:id/accept                                        -> {committed, pushed, error?}
 GET  /runs/:id/files/*             workspace files (media inline-previewable)
 GET  /projects                     ProjectRow[] (+cost_usd)
-POST /projects        {name, memory_dir?, memory_repo?, workspace_dirs?[], code_repos?[]}
-                                   -> 201 ProjectRow | 400 | 409 duplicate | 502 github
+POST /projects        {name, memory_dir?, memory_repo?, monorepo?, workspace_dirs?[],
+                        code_repos?[], credentials?: {[url]: GitCredential}}
+                       -> 201 {...ProjectRow, clone_results: {url,ok,path?,error?}[]}
+                          | 400 | 409 duplicate | 502 github
 DELETE /projects/:slug                            -> 204 | 404
+GET  /fs/list?path=                {path, parent, entries: {name,path}[]} -> real dir listing
+POST /fs/check-repo   {url, credential?: GitCredential}   -> {ok:true} | {ok:false, error}
 GET  /memories                     MemoryRow[] (status: approved|pending|awaiting_user|rejected)
 POST /memories/:id/decision {decision: approve|reject}
 ```
+
+`GitCredential` = `{method:"system"}` | `{method:"ssh_key", keyPath}` | `{method:"token", token}`
+— see `server/git-auth.ts`, the single choke point every git shell-out goes through. Never
+persisted: credentials live only for the request that supplied them (check-repo validation,
+or the clone at project-creation time). System (ambient git identity — SSH agent / credential
+helper, whatever `git` on this machine already uses) is the default and correct choice for
+most repos; ssh_key/token exist for repos that need a different identity than your default.
 
 RunRow: `{id, prompt, status, workspace_dir, product, mode, yolo, budget_raise, cost_usd, created_at, updated_at}`
 Run statuses: `queued running awaiting_user paused_budget completed failed stopped`
@@ -103,6 +119,8 @@ no open-ended model deliberation.
 
 ## Notes for future work
 
+- `memory_repo` doesn't get the same credential-selector/validation treatment as code_repos
+  yet — same git-auth.ts module would cover it, just not wired into that field's UI.
 - No git-diff view yet for "Code changes" — it currently lists artifact files (path + kind),
   not a real diff. A `GET /runs/:id/diff` endpoint would enable a proper per-file diff view.
 - Provider keys: only Moonshot is configured in this environment as of writing, and that
