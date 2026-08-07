@@ -64,7 +64,12 @@ a:hover { text-decoration: underline; }
 
 .panel-title {
   margin: 0; padding: 12px 14px 8px; font: 700 10.5px var(--font); color: var(--text-3);
-  text-transform: uppercase; letter-spacing: .08em;
+  text-transform: uppercase; letter-spacing: .08em; display: flex; align-items: center; gap: 7px;
+}
+.roster-count {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px;
+  padding: 0 4px; border-radius: 999px; background: color-mix(in srgb, var(--ok) 22%, transparent);
+  color: var(--ok); font: 700 10px var(--mono); animation: dot-pulse 1.6s ease-out infinite;
 }
 
 /* ---------------------------------------------------------------- glass */
@@ -149,6 +154,13 @@ a:hover { text-decoration: underline; }
   border-left-color: var(--brand); background: var(--glass-strong);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent);
 }
+.run-top { display: flex; align-items: center; gap: 6px; }
+.run-x {
+  margin-left: auto; opacity: 0; width: 16px; height: 16px; display: grid; place-items: center;
+  border-radius: 50%; font-size: 13px; color: var(--text-3); cursor: pointer; transition: all .15s var(--ease);
+}
+.run-card:hover .run-x { opacity: 1; }
+.run-x:hover { background: var(--err); color: #fff; }
 .run-prompt { display: block; margin-top: 5px; color: var(--text); font-size: 12.5px; line-height: 1.4; word-break: break-word; }
 .run-meta { display: block; margin-top: 4px; color: var(--text-3); font: 510 10.5px var(--mono); }
 

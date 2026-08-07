@@ -3,9 +3,13 @@ const esc = (s) => { const d = document.createElement("div"); d.textContent = s;
 /** "Who's working" — derived from live task state, no extra endpoint needed. */
 export function renderRoster(run, tasks) {
   const el = document.getElementById("roster-list");
-  if (!run) { el.innerHTML = '<div class="empty-hint">No active session.</div>'; return; }
+  const count = document.getElementById("roster-count");
+
+  if (!run) { el.innerHTML = '<div class="empty-hint">No active session.</div>'; count.classList.add("hidden"); return; }
 
   const active = tasks.filter((t) => t.status === "running" || t.status === "verifying");
+  count.textContent = active.length ? String(active.length) : "";
+  count.classList.toggle("hidden", active.length === 0);
 
   if (run.status === "running" && tasks.length === 0) {
     el.innerHTML = `

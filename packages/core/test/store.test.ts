@@ -117,4 +117,20 @@ describe("Store", () => {
     // idempotent: nothing left to recover
     expect(store.recoverInterruptedRuns()).toEqual([]);
   });
+
+  it("deleteRun cascades to its tasks, messages, and artifacts", () => {
+    const run = store.createRun("clean me up");
+    const task = store.createTask({ runId: run.id, seq: 1, class: "build", description: "x" });
+    store.addMessage({ runId: run.id, role: "user", content: "hi" });
+    store.addArtifact({ runId: run.id, taskId: task.id, path: "out.txt", kind: "doc" });
+
+    expect(store.deleteRun(run.id)).toBe(true);
+
+    expect(() => store.getRun(run.id)).toThrow();
+    expect(store.listTasks(run.id)).toHaveLength(0);
+    expect(store.listMessages(run.id)).toHaveLength(0);
+    expect(store.listArtifacts(run.id)).toHaveLength(0);
+    // idempotent: already gone
+    expect(store.deleteRun(run.id)).toBe(false);
+  });
 });

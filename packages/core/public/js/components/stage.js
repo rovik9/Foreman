@@ -84,7 +84,7 @@ export async function renderPermissions() {
         <div class="perm-card" data-run-id="${r.id}">
           <span class="pill" data-status="${esc(r.status)}">${esc(r.status)}</span>
           <div>${esc(r.prompt.slice(0, 80))}</div>
-          ${r.status === "paused_budget" ? `<button class="perm-topup" data-id="${r.id}">+ $5 top-up &amp; resume</button>` : ""}
+          ${r.status === "paused_budget" ? `<button class="perm-topup" data-id="${r.id}">Top up &amp; resume</button>` : ""}
           <button class="perm-open" data-id="${r.id}">open</button>
         </div>`).join("")
       : "") +
@@ -103,7 +103,11 @@ export async function renderPermissions() {
   }
   for (const btn of document.querySelectorAll(".perm-topup")) {
     btn.addEventListener("click", async () => {
-      await api.topUpBudget(btn.dataset.id, 5);
+      const raw = window.prompt("Top up this run's budget by how much (USD)?", "5");
+      if (raw === null) return;
+      const addUsd = Number(raw);
+      if (!(addUsd > 0)) { window.alert("Enter a positive number."); return; }
+      await api.topUpBudget(btn.dataset.id, addUsd);
       renderPermissions();
     });
   }

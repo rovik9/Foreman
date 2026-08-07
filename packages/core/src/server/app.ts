@@ -202,6 +202,12 @@ export function createApp(deps: RunnerDeps): Hono {
 
   app.get("/runs", (c) => c.json(store.listRuns()));
 
+  app.delete("/runs/:id", (c) => {
+    return store.deleteRun(c.req.param("id"))
+      ? c.body(null, 204)
+      : c.json({ error: "not found" }, 404);
+  });
+
   app.get("/memories", (c) => c.json(store.listMemories(50)));
 
   // user decision on critical memory writes (governance: human gate)

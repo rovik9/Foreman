@@ -15,6 +15,7 @@ async function req(path, opts = {}) {
 export const api = {
   listRuns: () => req("/runs"),
   getRun: (id) => req(`/runs/${id}`),
+  deleteRun: (id) => req(`/runs/${id}`, { method: "DELETE" }),
   createRun: (prompt, project, mode, yolo) =>
     req("/runs", { method: "POST", body: JSON.stringify({ prompt, project, mode, yolo }) }),
   chat: (runId, message) =>

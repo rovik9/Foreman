@@ -341,6 +341,12 @@ export class Store {
       .all(limit) as RunRow[];
   }
 
+  /** Deletes a run and cascades to its tasks/messages/artifacts/cost_ledger rows (FK ON DELETE CASCADE). */
+  deleteRun(id: string): boolean {
+    const r = this.db.prepare("DELETE FROM runs WHERE id = ?").run(id);
+    return r.changes > 0;
+  }
+
   updateTask(
     id: string,
     patch: Partial<
