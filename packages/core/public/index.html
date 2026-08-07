@@ -234,6 +234,21 @@
         <button class="settings-tab active" data-tab="keys">API Keys</button>
         <button class="settings-tab" data-tab="providers">Providers</button>
         <button class="settings-tab" data-tab="mcp">MCP Servers</button>
+        <button class="settings-tab" data-tab="engine">Engine</button>
+      </div>
+      <div id="settings-engine" class="settings-page hidden">
+        <p class="settings-hint">
+          Live engine settings. <code>config/*.yaml</code> supplies the defaults; anything you
+          change here overrides it and takes effect on the next model call — no restart, and
+          your YAML files are never rewritten. <b>Reset</b> drops the override.
+        </p>
+        <div id="engine-limits"></div>
+        <h4 class="engine-h">Role &rarr; model routing</h4>
+        <p class="settings-hint">
+          Each role has a shortlist the Interface AI picks from per task. <b>Active</b> is the
+          default when it doesn't override.
+        </p>
+        <div id="engine-roles"></div>
       </div>
       <div id="settings-providers" class="settings-page hidden">
         <p class="settings-hint">

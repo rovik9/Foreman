@@ -10,8 +10,8 @@ const UNTESTABLE = new Set(["HIGGSFIELD_API_KEY"]);
 async function renderKeys() {
   const keys = await api.listApiKeys();
   document.getElementById("settings-dot").classList.toggle("hidden", !keys.some((k) => k.set));
-  const groups = { provider: [], integration: [] };
-  for (const k of keys) groups[k.group].push(k);
+  const groups = { provider: [], integration: [], gateway: [], custom: [] };
+  for (const k of keys) (groups[k.group] ??= []).push(k);
 
   const section = (title, rows) => !rows.length ? "" : `
     <div class="key-group">
@@ -29,12 +29,17 @@ async function renderKeys() {
             <button type="button" class="key-clear" ${k.source !== "settings" ? "disabled" : ""}>Clear</button>
           </div>
           <div class="key-result"></div>
-          <div class="key-env">env var <code>${esc(k.name)}</code></div>
+          <div class="key-env">
+            env var <code>${esc(k.name)}</code>${k.restart_required ? " · read at boot, restart to apply" : ""}
+          </div>
         </div>`).join("")}
     </div>`;
 
   document.getElementById("keys-list").innerHTML =
-    section("AI providers", groups.provider) + section("Integrations", groups.integration);
+    section("AI providers", groups.provider)
+    + section("Integrations", groups.integration)
+    + section("DM gateway", groups.gateway)
+    + section("Custom", groups.custom);
 
   for (const row of document.querySelectorAll(".key-row")) {
     const name = row.dataset.name;
@@ -179,6 +184,115 @@ async function renderProviders() {
   }
 }
 
+const LIMIT_FIELDS = [
+  { key: "max_cost_per_run_usd", label: "Max cost per run", unit: "USD", step: "0.5", min: "0.01" },
+  { key: "max_cost_per_task_usd", label: "Max cost per task", unit: "USD", step: "0.1", min: "0.01" },
+  { key: "max_iterations_per_task", label: "Max retries per task", unit: "attempts", step: "1", min: "1" },
+  { key: "max_parallel_builders", label: "Parallel builders", unit: "at once", step: "1", min: "1" },
+  { key: "pm_clarify_confidence_threshold", label: "Clarify below confidence", unit: "0–1", step: "0.05", min: "0", max: "1" },
+  { key: "judge_pass_score", label: "Judge pass score", unit: "0–1", step: "0.05", min: "0", max: "1" },
+];
+
+async function renderEngine() {
+  const cfg = await api.getConfig();
+  const overridden = new Set(cfg.overridden);
+
+  document.getElementById("engine-limits").innerHTML = LIMIT_FIELDS.map((f) => {
+    const isOver = overridden.has(`limits.${f.key}`);
+    return `
+      <div class="cfg-row" data-key="limits.${f.key}">
+        <div class="cfg-info">
+          <span class="cfg-label">${esc(f.label)}</span>
+          ${isOver ? '<span class="cfg-badge">overridden</span>' : ""}
+        </div>
+        <div class="cfg-controls">
+          <input class="cfg-input" type="number" value="${cfg.limits[f.key]}"
+                 step="${f.step}" min="${f.min}" ${f.max ? `max="${f.max}"` : ""}>
+          <span class="cfg-unit">${esc(f.unit)}</span>
+          <button type="button" class="cfg-save">Save</button>
+          <button type="button" class="cfg-reset" ${isOver ? "" : "disabled"}>Reset</button>
+        </div>
+        <div class="cfg-result"></div>
+      </div>`;
+  }).join("");
+
+  const slots = Object.keys(cfg.slots);
+  document.getElementById("engine-roles").innerHTML = Object.entries(cfg.roles).map(([role, r]) => `
+    <div class="cfg-row role-row" data-role="${esc(role)}">
+      <div class="cfg-info">
+        <span class="cfg-label">${esc(role)}</span>
+        ${overridden.has(`roles.${role}`) ? '<span class="cfg-badge">overridden</span>' : ""}
+        <span class="cfg-unit">active:</span>
+        <select class="role-active">
+          ${r.options.map((o) => `<option value="${esc(o)}" ${o === r.active ? "selected" : ""}>${esc(o)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="role-options">
+        ${slots.map((s) => `
+          <label class="role-opt ${r.options.includes(s) ? "on" : ""}">
+            <input type="checkbox" value="${esc(s)}" ${r.options.includes(s) ? "checked" : ""}>
+            ${esc(s)}<span class="role-model">${esc(cfg.slots[s].model)}</span>
+          </label>`).join("")}
+      </div>
+      <div class="cfg-result"></div>
+    </div>`).join("");
+
+  for (const row of document.querySelectorAll("#engine-limits .cfg-row")) {
+    const key = row.dataset.key;
+    const input = row.querySelector(".cfg-input");
+    const result = row.querySelector(".cfg-result");
+    const save = async () => {
+      result.className = "cfg-result";
+      try {
+        await api.setConfig(key, Number(input.value));
+        await renderEngine();
+      } catch (err) {
+        result.className = "cfg-result err";
+        result.textContent = err.message;
+      }
+    };
+    row.querySelector(".cfg-save").addEventListener("click", save);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    row.querySelector(".cfg-reset").addEventListener("click", async () => {
+      await api.resetConfig(key);
+      await renderEngine();
+    });
+  }
+
+  for (const row of document.querySelectorAll(".role-row")) {
+    const role = row.dataset.role;
+    const result = row.querySelector(".cfg-result");
+    const commit = async () => {
+      const options = [...row.querySelectorAll(".role-options input:checked")].map((i) => i.value);
+      const active = row.querySelector(".role-active").value;
+      result.className = "cfg-result";
+      try {
+        await api.setConfig(`roles.${role}`, {
+          options,
+          // keep active valid when it was just unchecked
+          active: options.includes(active) ? active : options[0],
+        });
+        await renderEngine();
+      } catch (err) {
+        result.className = "cfg-result err";
+        result.textContent = err.message;
+      }
+    };
+    row.querySelector(".role-active").addEventListener("change", commit);
+    for (const box of row.querySelectorAll(".role-options input")) {
+      box.addEventListener("change", () => {
+        if (!row.querySelectorAll(".role-options input:checked").length) {
+          box.checked = true;
+          result.className = "cfg-result err";
+          result.textContent = "a role needs at least one option";
+          return;
+        }
+        commit();
+      });
+    }
+  }
+}
+
 function bindTabs() {
   for (const tab of document.querySelectorAll(".settings-tab")) {
     tab.addEventListener("click", () => {
@@ -205,7 +319,7 @@ export function bindSettings() {
 
   document.getElementById("settings-btn").addEventListener("click", async () => {
     modal.classList.remove("hidden");
-    await Promise.all([renderKeys(), renderMcp(), renderProviders()]);
+    await Promise.all([renderKeys(), renderMcp(), renderProviders(), renderEngine()]);
   });
   document.getElementById("settings-close").addEventListener("click", () => {
     modal.classList.add("hidden");

@@ -28,6 +28,8 @@ export interface RunnerDeps {
   memoryDir?: string;
   /** Root under which project code repos get cloned (server/app.ts POST /projects). */
   projectsDir?: string;
+  /** config/ directory, so a cleared override can be re-read from YAML. */
+  configDir?: string;
 }
 
 const REALTIME_TRIGGER =

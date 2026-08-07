@@ -779,6 +779,46 @@ a:hover { text-decoration: underline; }
 .key-result.ok, .mcp-result.ok { color: var(--ok); }
 .key-result.err, .mcp-result.err { color: var(--err); }
 
+/* engine (live config) */
+.engine-h { margin: 22px 0 4px; font: 700 10px var(--font); text-transform: uppercase; letter-spacing: .07em; color: var(--text-3); }
+.cfg-row { padding: 10px; border: 1px solid var(--glass-border); border-radius: var(--r-sm); margin-bottom: 8px; background: rgba(255,255,255,.015); }
+.cfg-info { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.cfg-label { font: 590 12.5px var(--font); color: var(--text); }
+.cfg-badge {
+  font: 700 9px var(--font); text-transform: uppercase; letter-spacing: .04em; padding: 2px 6px;
+  border-radius: 999px; color: var(--brand); background: color-mix(in srgb, var(--brand) 16%, transparent);
+}
+.cfg-controls { display: flex; align-items: center; gap: 7px; }
+.cfg-input {
+  width: 110px; background: var(--bg-1); color: var(--text); border: 1px solid var(--glass-border);
+  border-radius: var(--r-xs); padding: 7px 9px; font: inherit; font-variant-numeric: tabular-nums;
+}
+.cfg-input:focus { border-color: var(--accent); outline: none; }
+.cfg-unit { font: 500 10.5px var(--font); color: var(--text-4); }
+.cfg-controls button {
+  border: 0; border-radius: var(--r-xs); padding: 7px 12px; font: 700 11.5px var(--font); cursor: pointer;
+}
+.cfg-save { background: var(--gold-grad); color: var(--brand-ink); }
+.cfg-reset { background: var(--glass-hover); color: var(--text-3); }
+.cfg-reset:disabled { opacity: .35; cursor: not-allowed; }
+.cfg-result { margin-top: 7px; font: 590 11px var(--font); }
+.cfg-result:empty { display: none; }
+.cfg-result.err { color: var(--err); }
+.role-active {
+  background: var(--bg-1); color: var(--text); border: 1px solid var(--glass-border);
+  border-radius: var(--r-xs); padding: 4px 7px; font: 600 11.5px var(--mono); cursor: pointer;
+}
+.role-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.role-opt {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 999px;
+  border: 1px solid var(--glass-border); font: 600 11px var(--mono); color: var(--text-4); cursor: pointer;
+  transition: all .15s var(--ease);
+}
+.role-opt:hover { color: var(--text-2); }
+.role-opt.on { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.role-opt input { accent-color: var(--accent); cursor: pointer; }
+.role-model { font: 500 10px var(--font); color: var(--text-4); }
+
 #mcp-list { margin-bottom: 14px; }
 .mcp-row {
   padding: 10px; border: 1px solid var(--glass-border);

@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { resolve } from "node:path";
 import { AgentHarness } from "../agents/harness.js";
 import { loadConfig } from "../config/load.js";
+import { applyStoredOverrides } from "../config/overrides.js";
 import { ForemanBus } from "../events/bus.js";
 import { GatewayBridge } from "../gateway/bridge.js";
 import { DiscordAdapter } from "../gateway/discord.js";
@@ -17,8 +18,13 @@ try {
 } catch {
   // no .env yet — providers for missing keys will error clearly at call time
 }
-const config = loadConfig(resolve(root, "config"));
+const configDir = resolve(root, "config");
+const config = loadConfig(configDir);
 const store = new Store(resolve(root, "foreman.db"));
+// YAML is the default; anything edited in Settings overrides it, replayed here
+for (const problem of applyStoredOverrides(config, store)) {
+  console.warn(`  ignoring stale config override — ${problem}`);
+}
 const bus = new ForemanBus();
 // resolution is fully live (DB-backed settings key wins, falls back to .env,
 // rebuilt on every call) so adding a key in Settings never needs a restart
@@ -34,6 +40,7 @@ const runnerDeps: RunnerDeps = {
   harness,
   memoryDir: resolve(root, config.memory.mirror_dir),
   projectsDir: resolve(root, "projects"),
+  configDir,
 };
 
 const app = createApp(runnerDeps);

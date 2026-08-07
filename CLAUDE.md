@@ -171,6 +171,23 @@ now — the gateway registers adapters once at boot; hot-reloading a live bot co
 materially different feature than live-swapping a stateless API key, deliberately out of
 scope for this pass.
 
+## Config precedence (`config/overrides.ts`)
+
+`config/*.yaml` supplies defaults; anything edited in Settings → Engine overrides it. Overrides
+live in the `config_overrides` table (dotted key → JSON value) and are applied **onto the live
+config object** — which every agent, router and runner already holds by reference — so an edit
+lands on the next model call with no restart, and the user's YAML is never rewritten. Every
+override is validated with the same zod schemas the YAML is parsed with, so a bad value can't
+leave the config in a shape the pipeline doesn't expect. `applyStoredOverrides` replays them at
+boot; a since-invalidated one (e.g. a role pointing at a deleted slot) is logged and skipped.
+
+Editable today: all six `limits` numbers, every role's option shortlist + active slot, and
+`memory.auto_push`. `DELETE /settings/config/:key` drops the override and restores the YAML value.
+
+**Migrations are append-only.** Editing an existing entry in `MIGRATIONS` is a no-op on any
+database that already applied it — always append. (Learned the hard way: a table added inside an
+already-applied migration simply never existed on an existing DB.)
+
 ## Connection testing (`server/probe.ts`)
 
 Every credential has a **Test** button that makes a real call, because saved ≠ working:

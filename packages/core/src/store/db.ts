@@ -276,6 +276,15 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   `,
+  // NOTE: migrations are append-only. Editing an existing entry does nothing on
+  // a database that already applied it — always add a new one at the end.
+  `
+  CREATE TABLE config_overrides (
+    key TEXT PRIMARY KEY,          -- dotted path, e.g. limits.max_cost_per_run_usd
+    value TEXT NOT NULL,           -- JSON-encoded
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  `,
 ];
 
 export class Store {
@@ -854,6 +863,29 @@ export class Store {
   deleteMcpServer(id: string): boolean {
     const r = this.db.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id);
     return r.changes > 0;
+  }
+
+  // ---- config overrides (YAML stays the default; the UI edits win) ----
+
+  setConfigOverride(key: string, value: unknown): void {
+    this.db
+      .prepare(
+        `INSERT INTO config_overrides (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(key, JSON.stringify(value));
+  }
+
+  clearConfigOverride(key: string): void {
+    this.db.prepare("DELETE FROM config_overrides WHERE key = ?").run(key);
+  }
+
+  listConfigOverrides(): { key: string; value: unknown; updated_at: string }[] {
+    return (
+      this.db.prepare("SELECT * FROM config_overrides ORDER BY key").all() as {
+        key: string; value: string; updated_at: string;
+      }[]
+    ).map((r) => ({ key: r.key, value: JSON.parse(r.value) as unknown, updated_at: r.updated_at }));
   }
 
   // ---- custom providers (Ollama, Azure, vLLM, any OpenAI-compatible proxy) ----

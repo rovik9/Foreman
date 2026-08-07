@@ -51,6 +51,10 @@ export const api = {
   deleteProvider: (id) => req(`/settings/providers/${id}`, { method: "DELETE" }),
   testProvider: (id) => req(`/settings/providers/${id}/test`, { method: "POST" }),
   spend: (project) => req(`/spend${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  getConfig: () => req("/settings/config"),
+  setConfig: (key, value) =>
+    req("/settings/config", { method: "PATCH", body: JSON.stringify({ key, value }) }),
+  resetConfig: (key) => req(`/settings/config/${encodeURIComponent(key)}`, { method: "DELETE" }),
   listMcpServers: () => req("/settings/mcp-servers"),
   createMcpServer: (payload) =>
     req("/settings/mcp-servers", { method: "POST", body: JSON.stringify(payload) }),

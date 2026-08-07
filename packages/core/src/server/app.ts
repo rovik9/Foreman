@@ -9,9 +9,11 @@ import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { checkRepoAccess, cloneRepo, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
+import { applyOverride } from "../config/overrides.js";
+import { loadConfig } from "../config/load.js";
 import { ENV_VAR_FOR } from "../providers/factory.js";
 import { isProbeable, probeApiKey, probeCustomProvider, probeMcpServer } from "./probe.js";
-import { KNOWN_API_KEYS } from "./settings.js";
+import { KNOWN_API_KEYS, RESTART_REQUIRED } from "./settings.js";
 
 function repoBasename(url: string): string {
   const cleaned = url.replace(/\.git$/, "").replace(/\/+$/, "");
@@ -379,17 +381,19 @@ export function createApp(deps: RunnerDeps): Hono {
       set: stored.has(k.name) || Boolean(process.env[k.name]),
       source: stored.has(k.name) ? "settings" : process.env[k.name] ? "env" : "unset",
       updated_at: stored.get(k.name) ?? null,
+      restart_required: RESTART_REQUIRED.has(k.name),
     }));
-    // any key set via settings that isn't in the known list (raw env var name) still shows up
+    // anything else the user added by raw name still shows up and stays editable
     const extra = [...stored.keys()]
       .filter((name) => !KNOWN_API_KEYS.some((k) => k.name === name))
       .map((name) => ({
         name,
         label: name,
-        group: "integration" as const,
+        group: "custom" as const,
         set: true,
         source: "settings" as const,
         updated_at: stored.get(name) ?? null,
+        restart_required: false,
       }));
     return c.json([...known, ...extra]);
   });
@@ -476,6 +480,50 @@ export function createApp(deps: RunnerDeps): Hono {
       return c.json({ error: "not found" }, 404);
     }
     return c.json(await probeCustomProvider(p.base_url, p.api_key, p.wire));
+  });
+
+  /** Everything the engine is actually running with — YAML defaults plus any
+   *  Settings edits, flagged so the UI can show what's been changed. */
+  app.get("/settings/config", (c) => {
+    const overridden = new Set(store.listConfigOverrides().map((o) => o.key));
+    return c.json({
+      limits: deps.config.limits,
+      roles: deps.config.models.roles,
+      slots: Object.fromEntries(
+        Object.entries(deps.config.models.slots).map(([name, s]) => [
+          name,
+          { provider: s.provider, model: s.model, via: s.via, cost_weight: deps.config.models.cost_weights[name] ?? null },
+        ]),
+      ),
+      memory: { mirror_dir: deps.config.memory.mirror_dir, auto_push: deps.config.memory.auto_push },
+      overridden: [...overridden],
+    });
+  });
+
+  /** Applies onto the live config object (every agent holds it by reference),
+   *  then persists — so the change lands on the next model call, no restart. */
+  app.patch("/settings/config", async (c) => {
+    const body = await c.req
+      .json<{ key?: string; value?: unknown }>()
+      .catch((): { key?: string; value?: unknown } => ({}));
+    if (!body.key) return c.json({ error: "key required" }, 400);
+    const err = applyOverride(deps.config, body.key, body.value);
+    if (err) return c.json({ error: err }, 400);
+    store.setConfigOverride(body.key, body.value);
+    return c.json({ ok: true });
+  });
+
+  /** Drops the override and restores the value from config/*.yaml. */
+  app.delete("/settings/config/:key", (c) => {
+    const key = c.req.param("key");
+    store.clearConfigOverride(key);
+    const fresh = loadConfig(deps.configDir ?? "config");
+    const err = applyOverride(deps.config, key, key.startsWith("limits.")
+      ? (fresh.limits as unknown as Record<string, unknown>)[key.slice("limits.".length)]
+      : key.startsWith("roles.")
+        ? fresh.models.roles[key.slice("roles.".length) as keyof typeof fresh.models.roles]
+        : fresh.memory.auto_push);
+    return err ? c.json({ error: err }, 400) : c.json({ ok: true });
   });
 
   /** Spend analytics — cost ledger aggregated per project (or whole workspace). */
