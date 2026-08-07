@@ -30,6 +30,7 @@
       <span id="cost-session" title="Active run cost">$0.0000</span>
       <span id="cost-project" title="Active project total">proj $0.00</span>
     </div>
+    <button id="settings-btn" title="API keys &amp; MCP servers">&#9881;<span id="settings-dot" class="hidden"></span></button>
   </header>
 
   <main id="layout">
@@ -113,6 +114,50 @@
         <button type="submit">Create</button>
       </div>
     </form>
+  </div>
+
+  <!-- settings: the product's control plane — API keys & MCP servers -->
+  <div id="settings-modal" class="hidden">
+    <div class="settings-card">
+      <div class="settings-head">
+        <h3>Settings</h3>
+        <button type="button" id="settings-close" title="Close">&times;</button>
+      </div>
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="keys">API Keys</button>
+        <button class="settings-tab" data-tab="mcp">MCP Servers</button>
+      </div>
+      <div id="settings-keys" class="settings-page">
+        <p class="settings-hint">
+          Bring your own keys — Foreman never bills you for model usage. Saved keys apply
+          immediately, no restart. Clearing one falls back to <code>.env</code> if set there.
+        </p>
+        <div id="keys-list"></div>
+      </div>
+      <div id="settings-mcp" class="settings-page hidden">
+        <p class="settings-hint">
+          Connect any MCP server — asset generation, tools, whatever you run. Foreman talks
+          to it over stdio.
+        </p>
+        <div id="mcp-list"></div>
+        <form id="mcp-form">
+          <div class="mcp-form-row">
+            <input id="mcp-name" placeholder="Name (e.g. higgsfield)" required>
+            <select id="mcp-kind">
+              <option value="general">general</option>
+              <option value="video">video</option>
+              <option value="audio">audio</option>
+              <option value="image">image</option>
+            </select>
+          </div>
+          <input id="mcp-command" placeholder="Command (e.g. higgsfield-mcp)" required>
+          <input id="mcp-args" placeholder="Args, space-separated (optional)">
+          <div class="modal-actions">
+            <button type="submit">Add server</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <!-- local folder picker (server-driven — browsers can't hand a page a real OS path) -->

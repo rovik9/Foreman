@@ -35,4 +35,14 @@ export const api = {
   listDir: (path) => req(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   checkRepo: (url, credential) =>
     req("/fs/check-repo", { method: "POST", body: JSON.stringify({ url, credential }) }),
+  listApiKeys: () => req("/settings/api-keys"),
+  saveApiKey: (name, value) =>
+    req("/settings/api-keys", { method: "POST", body: JSON.stringify({ name, value }) }),
+  deleteApiKey: (name) => req(`/settings/api-keys/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  listMcpServers: () => req("/settings/mcp-servers"),
+  createMcpServer: (payload) =>
+    req("/settings/mcp-servers", { method: "POST", body: JSON.stringify(payload) }),
+  setMcpServerEnabled: (id, enabled) =>
+    req(`/settings/mcp-servers/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  deleteMcpServer: (id) => req(`/settings/mcp-servers/${id}`, { method: "DELETE" }),
 };

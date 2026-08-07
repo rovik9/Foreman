@@ -77,4 +77,59 @@ describe("server", () => {
     const msgs = rig.store.listMessages(run.id) as { content: string }[];
     expect(msgs.some((m) => m.content === "steer left")).toBe(true);
   });
+
+  it("settings/api-keys: lists known keys unset, then set after a save, never leaks the value", async () => {
+    const rig = makeRig({});
+    const app = createApp(rig);
+
+    const before = (await (await app.request("/settings/api-keys")).json()) as { name: string; set: boolean }[];
+    expect(before.some((k) => k.name === "ANTHROPIC_API_KEY" && !k.set)).toBe(true);
+
+    const save = await app.request("/settings/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "ANTHROPIC_API_KEY", value: "sk-super-secret" }),
+    });
+    expect(save.status).toBe(200);
+
+    const after = (await (await app.request("/settings/api-keys")).json()) as
+      { name: string; set: boolean; source: string }[];
+    const row = after.find((k) => k.name === "ANTHROPIC_API_KEY")!;
+    expect(row.set).toBe(true);
+    expect(row.source).toBe("settings");
+    expect(JSON.stringify(after)).not.toContain("sk-super-secret");
+
+    const del = await app.request("/settings/api-keys/ANTHROPIC_API_KEY", { method: "DELETE" });
+    expect(del.status).toBe(204);
+    expect(rig.store.getApiKey("ANTHROPIC_API_KEY")).toBeUndefined();
+  });
+
+  it("settings/mcp-servers: full CRUD over HTTP", async () => {
+    const rig = makeRig({});
+    const app = createApp(rig);
+
+    const create = await app.request("/settings/mcp-servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "higgsfield", kind: "video", command: "higgsfield-mcp", args: ["--x"] }),
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { id: string; args: string[] };
+    expect(created.args).toEqual(["--x"]);
+
+    const list = (await (await app.request("/settings/mcp-servers")).json()) as { id: string }[];
+    expect(list).toHaveLength(1);
+
+    const toggle = await app.request(`/settings/mcp-servers/${created.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(toggle.status).toBe(200);
+    expect(rig.store.getMcpServer(created.id).enabled).toBe(0);
+
+    const del = await app.request(`/settings/mcp-servers/${created.id}`, { method: "DELETE" });
+    expect(del.status).toBe(204);
+    expect(await app.request(`/settings/mcp-servers/${created.id}`, { method: "DELETE" }).then((r) => r.status)).toBe(404);
+  });
 });

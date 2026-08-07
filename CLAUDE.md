@@ -7,8 +7,13 @@ against acceptance criteria under hard budget caps, governs project memory (all 
 freely, writes need Interface approval, critical writes need the user), documents every run
 to a per-product git repo, and can be driven remotely from Telegram/Discord.
 
+**Product framing**: Foreman is bring-your-own-key — it never bills for model usage. Its
+sellable value is the orchestration/UI/memory layer on top of whatever APIs and MCP tools the
+user connects. That means Settings (below) is not a config afterthought, it's the onboarding
+experience — nobody paying for this should ever need to hand-edit `.env` or `config/*.yaml`.
+
 Engine (`packages/core/src`) and UI (`packages/core/public`) are both live and maintained
-here — there is no other agent to hand off to. Engine status: 99/99 tests passing, `tsc
+here — there is no other agent to hand off to. Engine status: 132/132 tests passing, `tsc
 --noEmit` clean, `eslint` clean as of this writing.
 
 ## Mission control UI
@@ -52,6 +57,13 @@ No build step — vanilla HTML/CSS/ES modules, no bundler, no frameworks. Serve 
   On submit, every code repo is actually cloned (shallow) into `projects/<slug>/<name>/` and
   the checkout path is appended to the project's workspace_dirs — proof of connectivity, not
   just a stored URL string.
+- **Settings** (gear icon, top-right — green dot when ≥1 key is configured): the product's
+  control plane. **API Keys** tab — one row per known provider/integration (Anthropic, OpenAI,
+  Moonshot, Groq, OpenRouter, GitHub, Higgsfield), masked input, Save/Clear, a status pill
+  (`configured` = DB-backed via settings, `from .env` = env fallback, `not set`). Saves apply
+  immediately — model routing re-resolves the key live, no restart (see `providers/factory.ts`
+  `resolveProviderLive`). **MCP Servers** tab — add any stdio MCP server (name, kind, command,
+  args), enable/disable, delete. Fully generic, not hardcoded to asset studios.
 
 ### Design tokens (`css/app.css` `:root`)
 
@@ -87,6 +99,14 @@ GET  /fs/list?path=                {path, parent, entries: {name,path}[]} -> rea
 POST /fs/check-repo   {url, credential?: GitCredential}   -> {ok:true} | {ok:false, error}
 GET  /memories                     MemoryRow[] (status: approved|pending|awaiting_user|rejected)
 POST /memories/:id/decision {decision: approve|reject}
+GET  /settings/api-keys            {name,label,group,set,source:settings|env|unset,updated_at}[]
+                                    — never returns raw values
+POST /settings/api-keys        {name, value}                 -> {ok} (blank value clears)
+DELETE /settings/api-keys/:name                                -> 204
+GET  /settings/mcp-servers         {id,name,kind,command,args,enabled,created_at}[]
+POST /settings/mcp-servers     {name, kind?, command, args?[]}  -> 201
+PATCH /settings/mcp-servers/:id {enabled}                       -> {ok} | 404
+DELETE /settings/mcp-servers/:id                                -> 204 | 404
 ```
 
 `GitCredential` = `{method:"system"}` | `{method:"ssh_key", keyPath}` | `{method:"token", token}`
@@ -117,15 +137,46 @@ Gemini Pro intent) · `memorizer` (cheapest slot on purpose). Users preselect th
 per role; the Interface AI picks fast from that shortlist per task, with a logged reason —
 no open-ended model deliberation.
 
+## API keys & MCP servers (`providers/factory.ts`, `store/db.ts` `api_keys`/`mcp_servers`)
+
+Resolution order for every provider call: DB-backed key (Settings UI) → `.env` → unroutable
+(harness throws a clear error naming the slot). `resolveProviderLive(via, store)` is called
+fresh on every model call — cheap, since providers are just fetch wrappers — so a key saved
+in Settings works immediately, mid-session, no restart. `AgentHarness`'s constructor takes
+this resolver as an optional 5th arg used only as a fallback when the static `ProviderMap`
+doesn't have the `via`; tests never pass it, so their behavior is unchanged.
+
+MCP servers are a real registry now (`mcp_servers` table), not the old hardcoded
+`config/models.yaml` `asset_studios: {video, audio}` two-slot placeholder — add any stdio
+server with a name/kind/command/args from Settings. `mcp/studio.ts` (asset generation) still
+reads its config the old way; wiring it to the new registry, and wiring MCP tool-calling into
+the agent loop itself (so builders/interface can actually *use* connected tools mid-task, not
+just asset-studio post-processing) are the natural next steps — see below.
+
+Telegram/Discord tokens and `TELEGRAM_ALLOWED_USER_IDS`/`DISCORD_*` remain `.env`-only for
+now — the gateway registers adapters once at boot; hot-reloading a live bot connection is a
+materially different feature than live-swapping a stateless API key, deliberately out of
+scope for this pass.
+
 ## Notes for future work
 
+- Settings-managed keys/MCP servers are DB-only right now — no way to *test* a saved key
+  against the real provider from the UI (a "ping" button per row). Structurally easy to add,
+  just needs a minimal probe call per vendor.
+- MCP servers are stored/toggleable but not yet consumed by the agent tool-use loop — see
+  above. That's the deeper lift: each provider has a different function/tool-calling wire
+  format (Anthropic tool_use blocks vs. OpenAI-style function calling, etc.), and it can't be
+  verified without a live key, which this environment doesn't currently have.
 - `memory_repo` doesn't get the same credential-selector/validation treatment as code_repos
   yet — same git-auth.ts module would cover it, just not wired into that field's UI.
 - No git-diff view yet for "Code changes" — it currently lists artifact files (path + kind),
   not a real diff. A `GET /runs/:id/diff` endpoint would enable a proper per-file diff view.
-- Provider keys: only Moonshot is configured in this environment as of writing, and that
-  account is suspended (429, insufficient balance) — expect runs to fail at the first
-  Interface AI call until keys are refreshed. The UI handles this gracefully (see Permissions
-  / Interface & Crew panels), it's an account/billing issue, not a bug.
+- Provider keys: only Moonshot is configured in this environment as of writing (via `.env`,
+  now also settable in Settings), and that account is suspended (429, insufficient balance) —
+  expect runs to fail at the first Interface AI call until keys are refreshed. The UI handles
+  this gracefully (see Permissions / Interface & Crew panels), it's an account/billing issue,
+  not a bug. Note: `OPENAI_API_KEY` also reads as present in this environment's process env
+  even though it's not in the committed `.env.example` — likely inherited from the host shell,
+  not this project; worth confirming it's actually meant for Foreman before relying on it.
 - Do not build DeFi/trading-product features — any "Rovik Capital" / fund-style prompts in
   the run history are stray test data from earlier sessions, not a real requirement.

@@ -9,6 +9,7 @@ import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { checkRepoAccess, cloneRepo, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
+import { KNOWN_API_KEYS } from "./settings.js";
 
 function repoBasename(url: string): string {
   const cleaned = url.replace(/\.git$/, "").replace(/\/+$/, "");
@@ -141,10 +142,12 @@ export function createApp(deps: RunnerDeps): Hono {
     }
 
     // memory remote: explicit URL wins; else auto-create via GitHub token
+    // (settings-managed key wins, falls back to .env — same pattern as model providers)
+    const githubToken = store.getApiKey("GITHUB_TOKEN") ?? process.env.GITHUB_TOKEN;
     let memoryRepo = body.memory_repo?.trim() || body.repo_url?.trim() || undefined;
-    if (!memoryRepo && process.env.GITHUB_TOKEN) {
+    if (!memoryRepo && githubToken) {
       try {
-        memoryRepo = await githubCreateRepo(process.env.GITHUB_TOKEN, `${slug}-memory`);
+        memoryRepo = await githubCreateRepo(githubToken, `${slug}-memory`);
       } catch (err) {
         return c.json(
           { error: `github: ${err instanceof Error ? err.message : String(err)}` },
@@ -348,6 +351,79 @@ export function createApp(deps: RunnerDeps): Hono {
       setImmediate(() => void runPipeline(deps, id));
     }
     return c.json({ ok: true });
+  });
+
+  // ---- settings: the product's control plane — API keys & MCP servers,
+  // live-editable, no .env/YAML hand-editing, no restart needed for model keys ----
+
+  app.get("/settings/api-keys", (c) => {
+    const stored = new Map(store.listApiKeyNames().map((k) => [k.name, k.updated_at]));
+    const known = KNOWN_API_KEYS.map((k) => ({
+      ...k,
+      set: stored.has(k.name) || Boolean(process.env[k.name]),
+      source: stored.has(k.name) ? "settings" : process.env[k.name] ? "env" : "unset",
+      updated_at: stored.get(k.name) ?? null,
+    }));
+    // any key set via settings that isn't in the known list (raw env var name) still shows up
+    const extra = [...stored.keys()]
+      .filter((name) => !KNOWN_API_KEYS.some((k) => k.name === name))
+      .map((name) => ({
+        name,
+        label: name,
+        group: "integration" as const,
+        set: true,
+        source: "settings" as const,
+        updated_at: stored.get(name) ?? null,
+      }));
+    return c.json([...known, ...extra]);
+  });
+
+  app.post("/settings/api-keys", async (c) => {
+    const body = await c.req
+      .json<{ name?: string; value?: string }>()
+      .catch((): { name?: string; value?: string } => ({}));
+    if (!body.name?.trim()) return c.json({ error: "name required" }, 400);
+    store.setApiKey(body.name.trim(), body.value ?? "");
+    return c.json({ ok: true });
+  });
+
+  app.delete("/settings/api-keys/:name", (c) => {
+    store.setApiKey(c.req.param("name"), "");
+    return c.body(null, 204);
+  });
+
+  app.get("/settings/mcp-servers", (c) =>
+    c.json(store.listMcpServers().map((s) => ({ ...s, args: JSON.parse(s.args) }))),
+  );
+
+  app.post("/settings/mcp-servers", async (c) => {
+    const body = await c.req
+      .json<{ name?: string; kind?: string; command?: string; args?: string[] }>()
+      .catch(() => ({}) as Record<string, never>);
+    if (!body.name?.trim()) return c.json({ error: "name required" }, 400);
+    if (!body.command?.trim()) return c.json({ error: "command required" }, 400);
+    const s = store.createMcpServer({
+      name: body.name.trim(),
+      kind: body.kind?.trim() || undefined,
+      command: body.command.trim(),
+      args: body.args ?? [],
+    });
+    return c.json({ ...s, args: JSON.parse(s.args) }, 201);
+  });
+
+  app.patch("/settings/mcp-servers/:id", async (c) => {
+    const body = await c.req
+      .json<{ enabled?: boolean }>()
+      .catch((): { enabled?: boolean } => ({}));
+    if (typeof body.enabled !== "boolean") return c.json({ error: "enabled must be boolean" }, 400);
+    const ok = store.setMcpServerEnabled(c.req.param("id"), body.enabled);
+    return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+  });
+
+  app.delete("/settings/mcp-servers/:id", (c) => {
+    return store.deleteMcpServer(c.req.param("id"))
+      ? c.body(null, 204)
+      : c.json({ error: "not found" }, 404);
   });
 
   return app;

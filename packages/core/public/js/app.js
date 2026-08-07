@@ -10,6 +10,7 @@ import { renderTasks } from "./components/tasks.js";
 import { renderRoster } from "./components/roster.js";
 import { renderChanges } from "./components/changes.js";
 import { renderPromptings } from "./components/promptings.js";
+import { bindSettings } from "./components/settings.js";
 
 function updateFooter(run) {
   const terminal = !run || ["completed", "failed", "stopped"].includes(run.status);
@@ -113,6 +114,7 @@ async function boot() {
   bindStageEvents(refresh);
   bindTopbar(refreshAll);
   bindFooter();
+  bindSettings();
 
   document.addEventListener("run:changed", (e) => attach(e.detail));
   document.addEventListener("project:changed", async () => {

@@ -2,6 +2,7 @@ import type { ForemanConfig, RoleName } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
 import type { ProviderMap } from "../providers/factory.js";
 import { estimateCostUsd } from "../providers/pricing.js";
+import type { Provider } from "../providers/types.js";
 import { resolveRoleSlot } from "../router/router.js";
 import type { Store } from "../store/db.js";
 
@@ -34,6 +35,11 @@ export class AgentHarness {
     private readonly store: Store,
     private readonly bus: ForemanBus,
     private readonly providers: ProviderMap,
+    /** Fallback for a `via` missing from the static map — resolves live from
+     *  DB-backed API keys (settings UI), so a key added mid-session works
+     *  without a restart. Tests never pass this, so their behavior (throw on
+     *  a missing provider) is unchanged. */
+    private readonly resolveProvider?: (via: string) => Provider | undefined,
   ) {}
 
   /** The slot currently active for a role (user-preselected default). */
@@ -45,10 +51,11 @@ export class AgentHarness {
     const slotCfg = this.config.models.slots[call.slot];
     if (!slotCfg) throw new Error(`unknown slot "${call.slot}"`);
 
-    const provider = this.providers[slotCfg.via] ?? this.providers.mock;
+    const provider =
+      this.providers[slotCfg.via] ?? this.resolveProvider?.(slotCfg.via) ?? this.providers.mock;
     if (!provider) {
       throw new Error(
-        `no provider configured for "${slotCfg.via}" (slot "${call.slot}") — set the API key in .env`,
+        `no provider configured for "${slotCfg.via}" (slot "${call.slot}") — add the API key in Settings or .env`,
       );
     }
 

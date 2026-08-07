@@ -133,4 +133,38 @@ describe("Store", () => {
     // idempotent: already gone
     expect(store.deleteRun(run.id)).toBe(false);
   });
+
+  it("api keys: set, get, list names without values, clear on blank", () => {
+    expect(store.getApiKey("ANTHROPIC_API_KEY")).toBeUndefined();
+
+    store.setApiKey("ANTHROPIC_API_KEY", "sk-test-123");
+    expect(store.getApiKey("ANTHROPIC_API_KEY")).toBe("sk-test-123");
+
+    const names = store.listApiKeyNames();
+    expect(names.map((n) => n.name)).toEqual(["ANTHROPIC_API_KEY"]);
+
+    // update overwrites, never leaks in the listing
+    store.setApiKey("ANTHROPIC_API_KEY", "sk-test-456");
+    expect(store.getApiKey("ANTHROPIC_API_KEY")).toBe("sk-test-456");
+
+    // blank clears
+    store.setApiKey("ANTHROPIC_API_KEY", "  ");
+    expect(store.getApiKey("ANTHROPIC_API_KEY")).toBeUndefined();
+    expect(store.listApiKeyNames()).toHaveLength(0);
+  });
+
+  it("mcp servers: create, list, toggle, delete", () => {
+    const s = store.createMcpServer({ name: "higgsfield", kind: "video", command: "higgsfield-mcp", args: ["--fast"] });
+    expect(s.enabled).toBe(1);
+    expect(JSON.parse(s.args)).toEqual(["--fast"]);
+
+    expect(store.listMcpServers()).toHaveLength(1);
+
+    expect(store.setMcpServerEnabled(s.id, false)).toBe(true);
+    expect(store.getMcpServer(s.id).enabled).toBe(0);
+
+    expect(store.deleteMcpServer(s.id)).toBe(true);
+    expect(store.listMcpServers()).toHaveLength(0);
+    expect(store.deleteMcpServer(s.id)).toBe(false);
+  });
 });

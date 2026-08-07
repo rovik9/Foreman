@@ -6,7 +6,7 @@ import { ForemanBus } from "../events/bus.js";
 import { GatewayBridge } from "../gateway/bridge.js";
 import { DiscordAdapter } from "../gateway/discord.js";
 import { TelegramAdapter } from "../gateway/telegram.js";
-import { buildProvidersFromEnv } from "../providers/factory.js";
+import { ENV_VAR_FOR, resolveProviderLive, type ProviderMap } from "../providers/factory.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { Store } from "../store/db.js";
 import { createApp } from "./app.js";
@@ -20,8 +20,12 @@ try {
 const config = loadConfig(resolve(root, "config"));
 const store = new Store(resolve(root, "foreman.db"));
 const bus = new ForemanBus();
-const providers = buildProvidersFromEnv();
-const harness = new AgentHarness(config, store, bus, providers);
+// resolution is fully live (DB-backed settings key wins, falls back to .env,
+// rebuilt on every call) so adding a key in Settings never needs a restart
+const providers: ProviderMap = {};
+const harness = new AgentHarness(config, store, bus, providers, (via) =>
+  resolveProviderLive(via, store),
+);
 
 const runnerDeps: RunnerDeps = {
   config,
@@ -72,8 +76,9 @@ for (const id of store.recoverInterruptedRuns()) {
 }
 
 serve({ fetch: app.fetch, port }, (info) => {
+  const live = Object.entries(ENV_VAR_FOR)
+    .filter(([, envVar]) => store.getApiKey(envVar) ?? process.env[envVar])
+    .map(([via]) => via);
   console.log(`\n  ● FOREMAN mission control → http://localhost:${info.port}\n`);
-  console.log(
-    `  providers: ${Object.keys(providers).join(", ") || "none (set keys in .env)"}`,
-  );
+  console.log(`  providers: ${live.join(", ") || "none — add keys in Settings or .env"}`);
 });

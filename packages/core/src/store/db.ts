@@ -85,6 +85,16 @@ export interface ProjectRow {
   created_at: string;
 }
 
+export interface McpServerRow {
+  id: string;
+  name: string;
+  kind: string;    // video | audio | image | general
+  command: string;
+  args: string;     // JSON string[]
+  enabled: number;  // 1 = usable, 0 = disabled without deleting
+  created_at: string;
+}
+
 const MIGRATIONS: string[] = [
   `
   CREATE TABLE runs (
@@ -204,6 +214,22 @@ const MIGRATIONS: string[] = [
   `,
   `
   ALTER TABLE runs ADD COLUMN budget_raise REAL NOT NULL DEFAULT 0;
+  `,
+  `
+  CREATE TABLE api_keys (
+    name TEXT PRIMARY KEY,           -- env var name, e.g. ANTHROPIC_API_KEY
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE mcp_servers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'general',   -- video | audio | image | general
+    command TEXT NOT NULL,
+    args TEXT NOT NULL DEFAULT '[]',        -- JSON string[]
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
   `,
 ];
 
@@ -636,5 +662,74 @@ export class Store {
     return this.db
       .prepare("SELECT * FROM projects ORDER BY created_at DESC")
       .all() as ProjectRow[];
+  }
+
+  // ---- api keys (live-editable — no .env restart needed; see providers/factory.ts) ----
+
+  /** Empty/blank value clears the key instead of storing an empty string. */
+  setApiKey(name: string, value: string): void {
+    if (!value.trim()) {
+      this.db.prepare("DELETE FROM api_keys WHERE name = ?").run(name);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO api_keys (name, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(name, value);
+  }
+
+  /** Raw value — used only by provider resolution, never returned over the API. */
+  getApiKey(name: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM api_keys WHERE name = ?").get(name) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  /** Which keys are set, without ever exposing the values — for the settings UI. */
+  listApiKeyNames(): { name: string; updated_at: string }[] {
+    return this.db
+      .prepare("SELECT name, updated_at FROM api_keys ORDER BY name")
+      .all() as { name: string; updated_at: string }[];
+  }
+
+  // ---- mcp servers (generic registry — asset studios today, agent tools later) ----
+
+  createMcpServer(s: { name: string; kind?: string; command: string; args?: string[] }): McpServerRow {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        "INSERT INTO mcp_servers (id, name, kind, command, args) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(id, s.name, s.kind ?? "general", s.command, JSON.stringify(s.args ?? []));
+    return this.getMcpServer(id);
+  }
+
+  getMcpServer(id: string): McpServerRow {
+    const row = this.db.prepare("SELECT * FROM mcp_servers WHERE id = ?").get(id) as
+      | McpServerRow
+      | undefined;
+    if (!row) throw new Error(`mcp server not found: ${id}`);
+    return row;
+  }
+
+  listMcpServers(): McpServerRow[] {
+    return this.db
+      .prepare("SELECT * FROM mcp_servers ORDER BY created_at")
+      .all() as McpServerRow[];
+  }
+
+  setMcpServerEnabled(id: string, enabled: boolean): boolean {
+    const r = this.db
+      .prepare("UPDATE mcp_servers SET enabled = ? WHERE id = ?")
+      .run(enabled ? 1 : 0, id);
+    return r.changes > 0;
+  }
+
+  deleteMcpServer(id: string): boolean {
+    const r = this.db.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id);
+    return r.changes > 0;
   }
 }
