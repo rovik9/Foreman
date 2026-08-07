@@ -54,18 +54,36 @@ export function buildProvidersFromEnv(
 /** Minimal shape the live resolver needs — avoids importing the whole Store class. */
 export interface ApiKeySource {
   getApiKey(name: string): string | undefined;
+  getCustomProviderByName?(name: string):
+    | { base_url: string; api_key: string | null; wire: string }
+    | undefined;
 }
 
 /**
- * Live provider resolution: DB-backed key (settings UI) wins, falls back to
- * .env, built fresh on every call so a key added mid-session works without
- * a restart. Cheap — providers are just fetch wrappers holding a key.
+ * Live provider resolution, in order:
+ *   1. a user-registered custom provider matching this `via` (Ollama, Azure,
+ *      vLLM, any OpenAI-compatible proxy — carries its own base URL)
+ *   2. a built-in vendor whose base URL is fixed and public, keyed by
+ *      DB-backed settings key, then .env
+ * Built fresh on every call so a key or endpoint added mid-session works
+ * without a restart. Cheap — providers are just fetch wrappers.
  */
 export function resolveProviderLive(
   via: string,
   keys: ApiKeySource,
   env: NodeJS.ProcessEnv = process.env,
 ): Provider | undefined {
+  const custom = keys.getCustomProviderByName?.(via);
+  if (custom) {
+    return custom.wire === "anthropic"
+      ? new AnthropicProvider(custom.api_key ?? "", custom.base_url)
+      : new OpenAICompatProvider({
+          baseUrl: custom.base_url,
+          // local servers (Ollama, LM Studio) usually accept any non-empty token
+          apiKey: custom.api_key ?? "not-needed",
+        });
+  }
+
   const envVar = ENV_VAR_FOR[via];
   if (!envVar) return undefined;
   const apiKey = keys.getApiKey(envVar) ?? env[envVar];

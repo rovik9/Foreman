@@ -9,6 +9,8 @@ import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { checkRepoAccess, cloneRepo, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
+import { ENV_VAR_FOR } from "../providers/factory.js";
+import { isProbeable, probeApiKey, probeCustomProvider, probeMcpServer } from "./probe.js";
 import { KNOWN_API_KEYS } from "./settings.js";
 
 function repoBasename(url: string): string {
@@ -58,9 +60,9 @@ export function createApp(deps: RunnerDeps): Hono {
       .json<{ prompt?: string; project?: string; mode?: string; yolo?: boolean }>()
       .catch((): { prompt?: string; project?: string; mode?: string; yolo?: boolean } => ({}));
     if (!body.prompt?.trim()) return c.json({ error: "prompt required" }, 400);
-    const mode = ["full", "plan", "design"].includes(body.mode ?? "")
+    const mode = ["discuss", "full", "plan", "design"].includes(body.mode ?? "")
       ? body.mode!
-      : "full";
+      : "discuss";
     if (body.project?.trim()) {
       try {
         store.getProject(body.project.trim());
@@ -314,6 +316,20 @@ export function createApp(deps: RunnerDeps): Hono {
     }
   });
 
+  /** Greenlights the build after the discuss phase — this is the moment the
+   *  rest of the crew (architect, builders, verifier) is allowed to start. */
+  app.post("/runs/:id/approve", (c) => {
+    try {
+      const run = store.getRun(c.req.param("id"));
+      store.approveRun(run.id);
+      store.addMessage({ runId: run.id, role: "user", content: "Approved — start building." });
+      setImmediate(() => void runPipeline(deps, run.id));
+      return c.json({ ok: true });
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
+  });
+
   app.post("/runs/:id/budget", async (c) => {
     const body = await c.req
       .json<{ add_usd?: number }>()
@@ -392,8 +408,90 @@ export function createApp(deps: RunnerDeps): Hono {
     return c.body(null, 204);
   });
 
+  /** Real auth check against the vendor — proves a saved key actually works.
+   *  Uses each vendor's model-list endpoint, so it costs zero tokens. */
+  app.post("/settings/api-keys/:name/test", async (c) => {
+    const name = c.req.param("name");
+    const body = await c.req
+      .json<{ value?: string }>()
+      .catch((): { value?: string } => ({}));
+    // test the pasted value if given (before saving), else whatever is in effect
+    const key = body.value?.trim() || store.getApiKey(name) || process.env[name];
+    if (!key) return c.json({ ok: false, error: "no key set" });
+    if (!isProbeable(name)) return c.json({ ok: false, error: "no connection test available for this key" });
+    return c.json(await probeApiKey(name, key));
+  });
+
+  // custom providers — anything that isn't one of the built-in fixed-URL vendors
+  app.get("/settings/providers", (c) =>
+    c.json(
+      store.listCustomProviders().map((p) => ({
+        id: p.id, name: p.name, label: p.label, base_url: p.base_url,
+        wire: p.wire, has_key: Boolean(p.api_key), created_at: p.created_at,
+      })),
+    ),
+  );
+
+  app.post("/settings/providers", async (c) => {
+    const body = await c.req
+      .json<{ name?: string; label?: string; base_url?: string; api_key?: string; wire?: string }>()
+      .catch(() => ({}) as Record<string, never>);
+    const name = body.name?.trim();
+    const baseUrl = body.base_url?.trim();
+    if (!name) return c.json({ error: "name required" }, 400);
+    if (!/^[a-z0-9_-]+$/i.test(name)) {
+      return c.json({ error: "name must be letters, digits, dash or underscore (it's the slot's `via`)" }, 400);
+    }
+    if (!baseUrl) return c.json({ error: "base_url required" }, 400);
+    if (ENV_VAR_FOR[name]) return c.json({ error: `"${name}" is a built-in vendor` }, 409);
+    if (store.getCustomProviderByName(name)) return c.json({ error: `"${name}" already exists` }, 409);
+    try {
+      return c.json(
+        store.createCustomProvider({
+          name,
+          label: body.label?.trim() || name,
+          baseUrl,
+          apiKey: body.api_key?.trim() || undefined,
+          wire: body.wire === "anthropic" ? "anthropic" : "openai",
+        }),
+        201,
+      );
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+  });
+
+  app.delete("/settings/providers/:id", (c) =>
+    store.deleteCustomProvider(c.req.param("id"))
+      ? c.body(null, 204)
+      : c.json({ error: "not found" }, 404),
+  );
+
+  /** Hits {base_url}/models to prove the endpoint is reachable and authorised. */
+  app.post("/settings/providers/:id/test", async (c) => {
+    let p;
+    try {
+      p = store.getCustomProvider(c.req.param("id"));
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
+    return c.json(await probeCustomProvider(p.base_url, p.api_key, p.wire));
+  });
+
+  /** Spend analytics — cost ledger aggregated per project (or whole workspace). */
+  app.get("/spend", (c) => {
+    const product = c.req.query("project");
+    return c.json(store.spendReport(product || undefined));
+  });
+
   app.get("/settings/mcp-servers", (c) =>
-    c.json(store.listMcpServers().map((s) => ({ ...s, args: JSON.parse(s.args) }))),
+    c.json(
+      store.listMcpServers().map((s) => ({
+        ...s,
+        args: JSON.parse(s.args),
+        tools: JSON.parse(s.tools),
+      })),
+    ),
   );
 
   app.post("/settings/mcp-servers", async (c) => {
@@ -408,7 +506,7 @@ export function createApp(deps: RunnerDeps): Hono {
       command: body.command.trim(),
       args: body.args ?? [],
     });
-    return c.json({ ...s, args: JSON.parse(s.args) }, 201);
+    return c.json({ ...s, args: JSON.parse(s.args), tools: JSON.parse(s.tools) }, 201);
   });
 
   app.patch("/settings/mcp-servers/:id", async (c) => {
@@ -424,6 +522,24 @@ export function createApp(deps: RunnerDeps): Hono {
     return store.deleteMcpServer(c.req.param("id"))
       ? c.body(null, 204)
       : c.json({ error: "not found" }, 404);
+  });
+
+  /** Actually spawns the server over stdio and lists its tools — the only
+   *  honest way to know it works before a run depends on it. */
+  app.post("/settings/mcp-servers/:id/test", async (c) => {
+    let server;
+    try {
+      server = store.getMcpServer(c.req.param("id"));
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
+    const result = await probeMcpServer(server.command, JSON.parse(server.args) as string[]);
+    store.recordMcpProbe(server.id, {
+      ok: result.ok,
+      error: result.ok ? undefined : result.error,
+      tools: result.ok ? result.tools : [],
+    });
+    return c.json(result);
   });
 
   return app;

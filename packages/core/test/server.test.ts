@@ -41,7 +41,8 @@ describe("server", () => {
     const create = await app.request("/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "build me a landing page" }),
+      // "full" = skip the discuss gate; this test is about the build pipeline
+      body: JSON.stringify({ prompt: "build me a landing page", mode: "full" }),
     });
     expect(create.status).toBe(201);
     const { id } = (await create.json()) as { id: string };
@@ -62,6 +63,46 @@ describe("server", () => {
 
     const list = await app.request("/runs");
     expect(((await list.json()) as unknown[]).length).toBe(1);
+  });
+
+  it("defaults to discuss mode — a bare prompt never dispatches the crew", async () => {
+    const rig = makeRig({
+      "pm-model": [JSON.stringify({ reply: "What should it do exactly?", ready: false })],
+    });
+    const app = createApp(rig);
+
+    const create = await app.request("/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "make me something" }),
+    });
+    const { id } = (await create.json()) as { id: string };
+
+    await pollUntil(async () => {
+      const body = (await (await app.request(`/runs/${id}`)).json()) as { run: { status: string } };
+      return body.run.status === "awaiting_user";
+    });
+
+    const body = (await (await app.request(`/runs/${id}`)).json()) as {
+      run: { mode: string; approved: number };
+      tasks: unknown[];
+      messages: { role: string; content: string }[];
+    };
+    expect(body.run.mode).toBe("discuss");
+    expect(body.run.approved).toBe(0);
+    expect(body.tasks).toHaveLength(0);
+    expect(body.messages.some((m) => m.role === "interface")).toBe(true);
+    // nothing downstream of the Interface AI was ever called
+    expect(rig.mock.calls.every((c) => c.model === "pm-model")).toBe(true);
+  });
+
+  it("approve releases the crew", async () => {
+    const rig = makeRig({});
+    const app = createApp(rig);
+    const run = rig.store.createRun("x", { mode: "discuss" });
+    const res = await app.request(`/runs/${run.id}/approve`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(rig.store.getRun(run.id).approved).toBe(1);
   });
 
   it("accepts mid-run chat", async () => {

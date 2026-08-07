@@ -27,6 +27,68 @@ export interface RoutingResult {
   reasons: Map<string, string>;
 }
 
+const DISCUSS_SYSTEM = `You are the Interface AI of Foreman — the only one the user talks to.
+
+Right now you are DISCUSSING, not building. Talk like a thoughtful senior engineer in a
+normal conversation: plain prose, no JSON, no bullet-point spam, no corporate filler.
+
+Your job in this phase:
+- Understand what they actually want, and why. Ask about the parts that genuinely change
+  what gets built. One or two real questions at a time, never an interrogation.
+- Say what you'd do and briefly why. Name real trade-offs and your recommendation.
+- Push back when something seems off, under-specified, or more expensive than it needs to
+  be. You are a collaborator, not an order-taker.
+- Once the shape is clear, summarise the plan in a few lines and ask if they want you to
+  start building. Do NOT start building on your own.
+
+The user can reply to keep talking, or approve the build. When they approve, a crew of
+other models (architect, builders, verifier) executes what the two of you agreed.
+
+Respond with JSON only:
+{
+  "reply": "what you say to the user, in natural prose",
+  "ready": true | false   // true only once you've proposed a concrete plan worth approving
+}`;
+
+const DiscussSchema = z.object({
+  reply: z.string().min(1),
+  ready: z.boolean().default(false),
+});
+
+export interface DiscussTurn {
+  reply: string;
+  ready: boolean;
+}
+
+/**
+ * Conversation phase — the Interface AI talks with the user like a normal
+ * assistant and only signals `ready` once there's a concrete plan. Nothing
+ * downstream (architect/builders/judge) runs until the user approves, so a
+ * prompt is never blind-dumped into the whole crew.
+ */
+export async function discussWithUser(
+  harness: AgentHarness,
+  runId: string,
+  transcript: { role: string; content: string }[],
+): Promise<DiscussTurn> {
+  const rendered = transcript
+    .map((m) => `${m.role === "user" ? "USER" : "YOU"}: ${m.content}`)
+    .join("\n\n");
+
+  const r = await harness.run({
+    runId,
+    slot: harness.roleSlot("interface"),
+    // the harness logs raw prompt+completion under this role; keep it distinct
+    // from "interface" so the curated reply stays the only conversation turn
+    role: "interface_io",
+    system: DISCUSS_SYSTEM,
+    input: `Conversation so far:\n\n${rendered}\n\nReply to the latest USER message.`,
+    maxTokens: 2048,
+  });
+
+  return parseJson(r.output, DiscussSchema);
+}
+
 /**
  * The Interface AI routes each task across the user-PRESELECTED options for
  * the task's role. Choices come back with logged reasoning. Invalid picks

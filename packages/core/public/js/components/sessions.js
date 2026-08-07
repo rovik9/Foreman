@@ -8,13 +8,16 @@ export async function renderSessions() {
   const visible = state.activeProject
     ? state.runs.filter((r) => r.product === state.activeProject)
     : state.runs;
+  const count = document.getElementById("sessions-count");
+  if (count) count.textContent = visible.length ? String(visible.length) : "";
+
   document.getElementById("sessions-list").innerHTML = visible.length ? visible.map((r) => `
     <div class="run-card ${r.id === state.activeRun ? "active" : ""}" data-run-id="${r.id}">
       <div class="run-top">
         <span class="pill" data-status="${esc(r.status)}">${esc(r.status)}</span>
         <span class="run-x" data-del="${r.id}" title="Delete run">&times;</span>
       </div>
-      <div class="run-prompt">${esc(r.prompt.slice(0, 60))}</div>
+      <div class="run-prompt">${esc(r.prompt)}</div>
       <div class="run-meta">${esc(r.mode ?? "full")}${r.yolo ? " · yolo" : ""} · $${r.cost_usd.toFixed(4)}</div>
     </div>`).join("") : '<div class="empty-hint">No runs yet — dispatch one below.</div>';
 

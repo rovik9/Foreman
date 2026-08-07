@@ -167,6 +167,64 @@ describe("runPipeline", () => {
     expect(builderCalls[1]!.input).toContain("crashed");
   });
 
+  it("discuss mode talks first and dispatches nobody until approved", async () => {
+    const rig = makeRig({
+      "pm-model": [
+        JSON.stringify({
+          reply: "Do you want this as a single binary, or a package people install?",
+          ready: false,
+        }),
+        // second discuss turn, after the user replies
+        JSON.stringify({
+          reply: "Got it — single binary, SQLite for state. Want me to start?",
+          ready: true,
+        }),
+        ...HAPPY_SCRIPT["pm-model"]!,
+      ],
+      "arch-model": HAPPY_SCRIPT["arch-model"]!,
+      "build-model": HAPPY_SCRIPT["build-model"]!,
+      "judge-model": HAPPY_SCRIPT["judge-model"]!,
+      "memo-model": HAPPY_SCRIPT["memo-model"]!,
+    });
+    const run = rig.store.createRun("build me a todo cli", { mode: "discuss" });
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+    const deps = { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness };
+
+    await runPipeline(deps, run.id);
+
+    // it replied and stopped — no architect, no builders, no tasks
+    expect(rig.store.getRun(run.id).status).toBe("awaiting_user");
+    expect(rig.store.listTasks(run.id)).toHaveLength(0);
+    expect(rig.mock.calls.some((c) => c.model === "arch-model")).toBe(false);
+    expect(rig.mock.calls.some((c) => c.model === "build-model")).toBe(false);
+    const msgs = rig.store.listMessages(run.id) as { role: string; content: string }[];
+    expect(msgs.some((m) => m.role === "interface" && m.content.includes("single binary"))).toBe(true);
+
+    // the user replies — still just conversation, still nobody dispatched
+    rig.store.addMessage({ runId: run.id, role: "user", content: "single binary please" });
+    await runPipeline(deps, run.id);
+    expect(rig.store.listTasks(run.id)).toHaveLength(0);
+    expect(rig.mock.calls.some((c) => c.model === "arch-model")).toBe(false);
+
+    // approval is what releases the crew
+    rig.store.approveRun(run.id);
+    await runPipeline(deps, run.id);
+    expect(rig.store.getRun(run.id).status).toBe("completed");
+    expect(rig.store.listTasks(run.id)).toHaveLength(2);
+    expect(rig.mock.calls.some((c) => c.model === "build-model")).toBe(true);
+  });
+
+  it("yolo skips the discuss gate entirely", async () => {
+    const rig = makeRig(HAPPY_SCRIPT);
+    const run = rig.store.createRun("just build it", { mode: "discuss", yolo: true });
+    rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
+    await runPipeline(
+      { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
+      run.id,
+    );
+    expect(rig.store.getRun(run.id).status).toBe("completed");
+  });
+
   it("plan mode pauses after the DAG and builds on approval", async () => {
     const rig = makeRig(HAPPY_SCRIPT);
     const run = rig.store.createRun("build me a landing page", { mode: "plan" });

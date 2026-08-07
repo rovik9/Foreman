@@ -21,6 +21,7 @@ export const api = {
   chat: (runId, message) =>
     req(`/runs/${runId}/chat`, { method: "POST", body: JSON.stringify({ message }) }),
   stopRun: (runId) => req(`/runs/${runId}/stop`, { method: "POST" }),
+  approveRun: (runId) => req(`/runs/${runId}/approve`, { method: "POST" }),
   topUpBudget: (runId, add_usd) =>
     req(`/runs/${runId}/budget`, { method: "POST", body: JSON.stringify({ add_usd }) }),
   acceptRun: (runId) => req(`/runs/${runId}/accept`, { method: "POST" }),
@@ -39,6 +40,17 @@ export const api = {
   saveApiKey: (name, value) =>
     req("/settings/api-keys", { method: "POST", body: JSON.stringify({ name, value }) }),
   deleteApiKey: (name) => req(`/settings/api-keys/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  testApiKey: (name, value) =>
+    req(`/settings/api-keys/${encodeURIComponent(name)}/test`, {
+      method: "POST", body: JSON.stringify({ value }),
+    }),
+  testMcpServer: (id) => req(`/settings/mcp-servers/${id}/test`, { method: "POST" }),
+  listProviders: () => req("/settings/providers"),
+  createProvider: (payload) =>
+    req("/settings/providers", { method: "POST", body: JSON.stringify(payload) }),
+  deleteProvider: (id) => req(`/settings/providers/${id}`, { method: "DELETE" }),
+  testProvider: (id) => req(`/settings/providers/${id}/test`, { method: "POST" }),
+  spend: (project) => req(`/spend${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   listMcpServers: () => req("/settings/mcp-servers"),
   createMcpServer: (payload) =>
     req("/settings/mcp-servers", { method: "POST", body: JSON.stringify(payload) }),

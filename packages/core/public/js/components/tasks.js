@@ -4,6 +4,8 @@ const esc = (s) => { const d = document.createElement("div"); d.textContent = s;
 
 export function renderTasks(tasks) {
   const el = document.getElementById("tasks-list");
+  const count = document.getElementById("tasks-count");
+  if (count) count.textContent = tasks.length ? String(tasks.length) : "";
   if (!state.activeRun) { el.innerHTML = '<div class="empty-hint">Select or dispatch a run to see its tasks.</div>'; return; }
   if (!tasks.length) { el.innerHTML = '<div class="empty-hint">Architect hasn’t planned tasks yet.</div>'; return; }
   el.innerHTML = tasks.map((t) => `

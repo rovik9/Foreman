@@ -28,6 +28,7 @@ export interface RunRow {
   mode: string; // full | plan | design
   yolo: number; // 1 = bypass permission gates
   budget_raise: number; // extra USD on top of the run cap (top-ups)
+  approved: number;     // 1 = user greenlit the build after the discuss phase
   cost_usd: number;
   created_at: string;
   updated_at: string;
@@ -85,6 +86,26 @@ export interface ProjectRow {
   created_at: string;
 }
 
+export interface CustomProviderRow {
+  id: string;
+  name: string;      // used as a slot's `via` in models.yaml
+  label: string;
+  base_url: string;
+  api_key: string | null;
+  wire: string;      // openai | anthropic
+  created_at: string;
+}
+
+export interface MessageRow {
+  id: number;
+  run_id: string;
+  task_id: string | null;
+  role: string;   // user | pm | interface | architect | builder | judge | context | system
+  slot: string | null;
+  content: string;
+  created_at: string;
+}
+
 export interface McpServerRow {
   id: string;
   name: string;
@@ -93,6 +114,10 @@ export interface McpServerRow {
   args: string;     // JSON string[]
   enabled: number;  // 1 = usable, 0 = disabled without deleting
   created_at: string;
+  last_status: string | null;    // ok | error | null (never tested)
+  last_error: string | null;
+  tools: string;                 // JSON string[] — discovered on last successful probe
+  last_checked_at: string | null;
 }
 
 const MIGRATIONS: string[] = [
@@ -231,6 +256,26 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   `,
+  `
+  ALTER TABLE mcp_servers ADD COLUMN last_status TEXT;
+  ALTER TABLE mcp_servers ADD COLUMN last_error TEXT;
+  ALTER TABLE mcp_servers ADD COLUMN tools TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE mcp_servers ADD COLUMN last_checked_at TEXT;
+  `,
+  `
+  ALTER TABLE runs ADD COLUMN approved INTEGER NOT NULL DEFAULT 0;
+  `,
+  `
+  CREATE TABLE custom_providers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,        -- the slot's "via" value in models.yaml
+    label TEXT NOT NULL,
+    base_url TEXT NOT NULL,           -- e.g. http://localhost:11434/v1 (Ollama)
+    api_key TEXT,                     -- optional: local servers often need none
+    wire TEXT NOT NULL DEFAULT 'openai',  -- openai | anthropic
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  `,
 ];
 
 export class Store {
@@ -305,6 +350,13 @@ export class Store {
     this.db
       .prepare("UPDATE runs SET product = ?, updated_at = datetime('now') WHERE id = ?")
       .run(product, id);
+  }
+
+  /** User greenlit the build after discussing — lets the pipeline past the discuss gate. */
+  approveRun(id: string): void {
+    this.db
+      .prepare("UPDATE runs SET approved = 1, updated_at = datetime('now') WHERE id = ?")
+      .run(id);
   }
 
   raiseBudget(id: string, addUsd: number): void {
@@ -475,6 +527,55 @@ export class Store {
           .run(c.costUsd, c.taskId);
       }
     })();
+  }
+
+  // ---- spend analytics (cost_ledger joined to runs for project attribution) ----
+
+  /** Every aggregate the spend view needs, scoped to one project or the whole workspace. */
+  spendReport(product?: string): {
+    totals: { cost: number; calls: number; promptTokens: number; completionTokens: number };
+    byModel: { model: string; slot: string; cost: number; calls: number; promptTokens: number; completionTokens: number }[];
+    byDay: { day: string; cost: number }[];
+    byRun: { run_id: string; prompt: string; status: string; cost: number; calls: number }[];
+  } {
+    const where = product ? "WHERE r.product = ?" : "";
+    const p = product ? [product] : [];
+
+    const totals = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(c.cost_usd), 0) AS cost, COUNT(*) AS calls,
+                COALESCE(SUM(c.prompt_tokens), 0) AS promptTokens,
+                COALESCE(SUM(c.completion_tokens), 0) AS completionTokens
+         FROM cost_ledger c JOIN runs r ON r.id = c.run_id ${where}`,
+      )
+      .get(...p) as { cost: number; calls: number; promptTokens: number; completionTokens: number };
+
+    const byModel = this.db
+      .prepare(
+        `SELECT c.model, c.slot, SUM(c.cost_usd) AS cost, COUNT(*) AS calls,
+                SUM(c.prompt_tokens) AS promptTokens, SUM(c.completion_tokens) AS completionTokens
+         FROM cost_ledger c JOIN runs r ON r.id = c.run_id ${where}
+         GROUP BY c.model, c.slot ORDER BY cost DESC`,
+      )
+      .all(...p) as { model: string; slot: string; cost: number; calls: number; promptTokens: number; completionTokens: number }[];
+
+    const byDay = this.db
+      .prepare(
+        `SELECT date(c.created_at) AS day, SUM(c.cost_usd) AS cost
+         FROM cost_ledger c JOIN runs r ON r.id = c.run_id ${where}
+         GROUP BY day ORDER BY day`,
+      )
+      .all(...p) as { day: string; cost: number }[];
+
+    const byRun = this.db
+      .prepare(
+        `SELECT c.run_id, r.prompt, r.status, SUM(c.cost_usd) AS cost, COUNT(*) AS calls
+         FROM cost_ledger c JOIN runs r ON r.id = c.run_id ${where}
+         GROUP BY c.run_id ORDER BY cost DESC LIMIT 50`,
+      )
+      .all(...p) as { run_id: string; prompt: string; status: string; cost: number; calls: number }[];
+
+    return { totals, byModel, byDay, byRun };
   }
 
   runCost(runId: string): number {
@@ -721,6 +822,28 @@ export class Store {
       .all() as McpServerRow[];
   }
 
+  /** Records the outcome of a real connection probe (see server/probe.ts). */
+  recordMcpProbe(id: string, r: { ok: boolean; error?: string; tools?: string[] }): void {
+    this.db
+      .prepare(
+        `UPDATE mcp_servers
+         SET last_status = ?, last_error = ?, tools = ?, last_checked_at = datetime('now')
+         WHERE id = ?`,
+      )
+      .run(r.ok ? "ok" : "error", r.error ?? null, JSON.stringify(r.tools ?? []), id);
+  }
+
+  /** Enabled servers only — what the pipeline is allowed to actually call. */
+  listEnabledMcpServers(kind?: string): McpServerRow[] {
+    return kind
+      ? (this.db
+          .prepare("SELECT * FROM mcp_servers WHERE enabled = 1 AND kind = ? ORDER BY created_at")
+          .all(kind) as McpServerRow[])
+      : (this.db
+          .prepare("SELECT * FROM mcp_servers WHERE enabled = 1 ORDER BY created_at")
+          .all() as McpServerRow[]);
+  }
+
   setMcpServerEnabled(id: string, enabled: boolean): boolean {
     const r = this.db
       .prepare("UPDATE mcp_servers SET enabled = ? WHERE id = ?")
@@ -730,6 +853,46 @@ export class Store {
 
   deleteMcpServer(id: string): boolean {
     const r = this.db.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id);
+    return r.changes > 0;
+  }
+
+  // ---- custom providers (Ollama, Azure, vLLM, any OpenAI-compatible proxy) ----
+
+  createCustomProvider(p: {
+    name: string; label: string; baseUrl: string; apiKey?: string; wire?: string;
+  }): CustomProviderRow {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        "INSERT INTO custom_providers (id, name, label, base_url, api_key, wire) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(id, p.name, p.label, p.baseUrl, p.apiKey ?? null, p.wire ?? "openai");
+    return this.getCustomProvider(id);
+  }
+
+  getCustomProvider(id: string): CustomProviderRow {
+    const row = this.db.prepare("SELECT * FROM custom_providers WHERE id = ?").get(id) as
+      | CustomProviderRow
+      | undefined;
+    if (!row) throw new Error(`custom provider not found: ${id}`);
+    return row;
+  }
+
+  /** Looked up by a slot's `via` value during provider resolution. */
+  getCustomProviderByName(name: string): CustomProviderRow | undefined {
+    return this.db.prepare("SELECT * FROM custom_providers WHERE name = ?").get(name) as
+      | CustomProviderRow
+      | undefined;
+  }
+
+  listCustomProviders(): CustomProviderRow[] {
+    return this.db
+      .prepare("SELECT * FROM custom_providers ORDER BY created_at")
+      .all() as CustomProviderRow[];
+  }
+
+  deleteCustomProvider(id: string): boolean {
+    const r = this.db.prepare("DELETE FROM custom_providers WHERE id = ?").run(id);
     return r.changes > 0;
   }
 }

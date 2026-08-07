@@ -4,19 +4,32 @@ import { state, setActiveRun } from "./state.js";
 import { renderTopbar, bindTopbar } from "./components/topbar.js";
 import { renderSessions } from "./components/sessions.js";
 import {
-  bindStageTabs, bindStageEvents, clearFeed, renderAssets, renderPermissions,
+  bindStageTabs, bindStageEvents, clearFeed, renderAssets, renderPermissions, setTabChangeHandler,
 } from "./components/stage.js";
+import { renderSpend } from "./components/spend.js";
 import { renderTasks } from "./components/tasks.js";
 import { renderRoster } from "./components/roster.js";
 import { renderChanges } from "./components/changes.js";
 import { renderPromptings } from "./components/promptings.js";
 import { bindSettings } from "./components/settings.js";
+import { bindViewPrefs } from "./components/viewprefs.js";
+import { renderIdle, renderProgress, setStageIdle } from "./components/idle.js";
 
 function updateFooter(run) {
   const terminal = !run || ["completed", "failed", "stopped"].includes(run.status);
-  document.getElementById("stop-btn").classList.toggle("hidden", terminal);
+  // still discussing: the crew hasn't been dispatched, so offer the greenlight
+  const discussing = !!run && run.mode === "discuss" && !run.approved
+    && !["completed", "failed", "stopped"].includes(run.status);
+
+  document.getElementById("stop-btn").classList.toggle("hidden", terminal || discussing);
   document.getElementById("accept-btn").classList.toggle("hidden", !run || run.status !== "completed");
+  document.getElementById("approve-btn").classList.toggle("hidden", !discussing);
   document.getElementById("steer-btn").classList.toggle("hidden", !run);
+  document.getElementById("main-input").placeholder = discussing
+    ? "Reply to the Interface AI…"
+    : run
+      ? "Steer the active run…"
+      : "Describe what you want built — the Interface AI will talk it through with you first…";
 }
 
 async function refresh() {
@@ -32,17 +45,21 @@ async function refresh() {
     renderChanges(null, []);
     renderAssets(null, []);
     renderPromptings([]);
+    renderProgress(null, []);
     updateFooter(null);
+    setStageIdle(true);
     await renderPermissions();
     return;
   }
 
+  setStageIdle(false);
   const d = await api.getRun(state.activeRun);
   document.getElementById("stage-run-label").textContent = d.run.prompt;
   statusEl.textContent = d.run.status;
   statusEl.dataset.status = d.run.status;
   document.getElementById("cost-session").textContent = `$${d.run.cost_usd.toFixed(4)}`;
 
+  renderProgress(d.run, d.tasks);
   renderTasks(d.tasks);
   renderRoster(d.run, d.tasks);
   renderChanges(state.activeRun, d.artifacts);
@@ -92,6 +109,12 @@ function bindFooter() {
     await refresh();
   });
 
+  document.getElementById("approve-btn").addEventListener("click", async () => {
+    if (!state.activeRun) return;
+    await api.approveRun(state.activeRun);
+    await refresh();
+  });
+
   document.getElementById("accept-btn").addEventListener("click", async () => {
     if (!state.activeRun) return;
     const result = await api.acceptRun(state.activeRun);
@@ -111,20 +134,32 @@ async function refreshAll() {
 
 async function boot() {
   bindStageTabs();
+  setTabChangeHandler(async (tab) => {
+    if (tab === "spend") await renderSpend();
+    // Feed with no run attached falls back to the idle dashboard
+    else if (!state.activeRun) setStageIdle(true);
+  });
   bindStageEvents(refresh);
   bindTopbar(refreshAll);
   bindFooter();
   bindSettings();
+  bindViewPrefs();
 
   document.addEventListener("run:changed", (e) => attach(e.detail));
   document.addEventListener("project:changed", async () => {
     await renderTopbar();
     await renderSessions();
+    // spend is project-scoped — keep it in sync when the scope changes
+    if (document.querySelector(".stage-tab.active")?.dataset.tab === "spend") await renderSpend();
   });
 
   await refreshAll();
   await refresh();
-  setInterval(() => { renderSessions(); renderPermissions(); }, 6000);
+  setInterval(() => {
+    renderSessions();
+    renderPermissions();
+    if (!state.activeRun) renderIdle();
+  }, 6000);
 }
 
 boot();

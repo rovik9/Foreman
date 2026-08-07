@@ -11,12 +11,18 @@ const MEDIA = {
 
 // ---- tabs ----
 
+/** Set by app.js so tab clicks can re-render the right pane without a cycle. */
+let onTabChange = () => {};
+export function setTabChangeHandler(fn) { onTabChange = fn; }
+
 export function bindStageTabs() {
   for (const tab of document.querySelectorAll(".stage-tab")) {
     tab.addEventListener("click", () => {
       for (const t of document.querySelectorAll(".stage-tab")) t.classList.toggle("active", t === tab);
       for (const p of document.querySelectorAll(".stage-page")) p.classList.add("hidden");
-      document.getElementById(`stage-${tab.dataset.tab}`).classList.remove("hidden");
+      document.getElementById("stage-idle").classList.add("hidden");
+      document.getElementById(`stage-${tab.dataset.tab}`)?.classList.remove("hidden");
+      onTabChange(tab.dataset.tab);
     });
   }
 }
@@ -83,7 +89,7 @@ export async function renderPermissions() {
       ? `<h4>Runs waiting on you</h4>` + blocked.map((r) => `
         <div class="perm-card" data-run-id="${r.id}">
           <span class="pill" data-status="${esc(r.status)}">${esc(r.status)}</span>
-          <div>${esc(r.prompt.slice(0, 80))}</div>
+          <div>${esc(r.prompt)}</div>
           ${r.status === "paused_budget" ? `<button class="perm-topup" data-id="${r.id}">Top up &amp; resume</button>` : ""}
           <button class="perm-open" data-id="${r.id}">open</button>
         </div>`).join("")

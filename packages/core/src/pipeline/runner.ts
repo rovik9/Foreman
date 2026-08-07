@@ -7,7 +7,7 @@ import { buildTask } from "../agents/builder.js";
 import { docTask } from "../agents/doc.js";
 import { judgeTask } from "../agents/judge.js";
 import { getRealtimeFeed } from "../agents/realtime.js";
-import { routeTasks } from "../agents/interface.js";
+import { discussWithUser, routeTasks } from "../agents/interface.js";
 import { synthesizeContext, CONTEXT_SYNTH_THRESHOLD } from "../agents/context.js";
 import type { ForemanConfig } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
@@ -15,7 +15,7 @@ import { documentRun } from "../journal/document.js";
 import { AssetStudio } from "../mcp/studio.js";
 import { recallBlock } from "../memory/recall.js";
 import { Router } from "../router/router.js";
-import type { Store, TaskRow } from "../store/db.js";
+import type { MessageRow, Store, TaskRow } from "../store/db.js";
 import { topoOrder } from "./dag.js";
 import { gatesSummary, runGates } from "./verifier.js";
 
@@ -67,6 +67,35 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
   try {
     store.setRunStatus(runId, "running");
     bus.emit({ type: "run_status", runId, data: { status: "running" } });
+
+    // ---- stage 0: discuss — the Interface AI talks it through with the user
+    // first, and nothing downstream runs until they explicitly approve. The
+    // user's message is never blind-dumped into the whole crew. ----
+    if (run.mode === "discuss" && !run.approved && !run.yolo) {
+      const transcript = (store.listMessages(runId) as MessageRow[])
+        .filter((m) => ["user", "interface", "pm"].includes(m.role))
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      const turn = await discussWithUser(harness, runId, transcript);
+      store.addMessage({
+        runId,
+        role: "interface",
+        slot: harness.roleSlot("interface"),
+        content: turn.reply,
+      });
+      store.setRunStatus(runId, "awaiting_user");
+      bus.emit({
+        type: "message",
+        runId,
+        data: { role: "interface", content: turn.reply },
+      });
+      bus.emit({
+        type: "run_status",
+        runId,
+        data: { status: "awaiting_user", phase: "discuss", ready: turn.ready },
+      });
+      return;
+    }
 
     // ---- stage 1: intake + planning (skipped if tasks already exist) ----
     let tasks = store.listTasks(runId);
@@ -337,12 +366,28 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
       ? `${spec.summary} ${spec.requirements.join(" ")}`
       : run.prompt;
     if (ASSET_TRIGGER.test(assetText)) {
-      for (const [name, studioCfg] of Object.entries(config.models.asset_studios)) {
-        const kind = (["video", "audio", "image"].includes(name) ? name : "image") as
-          | "video"
-          | "audio"
-          | "image";
-        const result = await new AssetStudio(studioCfg, kind).generate(
+      // servers registered in Settings win; config/models.yaml is the legacy fallback
+      const registered = store
+        .listEnabledMcpServers()
+        .filter((s) => ["video", "audio", "image"].includes(s.kind))
+        .map((s) => ({
+          name: s.name,
+          kind: s.kind as "video" | "audio" | "image",
+          cfg: { type: "mcp" as const, command: s.command, args: JSON.parse(s.args) as string[] },
+        }));
+      const studios = registered.length
+        ? registered
+        : Object.entries(config.models.asset_studios).map(([name, cfg]) => ({
+            name,
+            kind: (["video", "audio", "image"].includes(name) ? name : "image") as
+              | "video"
+              | "audio"
+              | "image",
+            cfg,
+          }));
+
+      for (const { name, kind, cfg } of studios) {
+        const result = await new AssetStudio(cfg, kind).generate(
           spec?.summary ?? run.prompt,
         );
         if (result.ok) {

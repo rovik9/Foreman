@@ -13,8 +13,21 @@ user connects. That means Settings (below) is not a config afterthought, it's th
 experience — nobody paying for this should ever need to hand-edit `.env` or `config/*.yaml`.
 
 Engine (`packages/core/src`) and UI (`packages/core/public`) are both live and maintained
-here — there is no other agent to hand off to. Engine status: 132/132 tests passing, `tsc
+here — there is no other agent to hand off to. Engine status: 138/138 tests passing, `tsc
 --noEmit` clean, `eslint` clean as of this writing.
+
+## How a run actually starts (discuss → approve → build)
+
+**`discuss` is the default mode.** A dispatched prompt is never blind-dumped into the whole
+crew. The Interface AI replies conversationally (prose, questions, trade-offs, a proposed
+plan — see `DISCUSS_SYSTEM` in `agents/interface.ts`), the run parks in `awaiting_user`, and
+the user keeps talking via `POST /runs/:id/chat`. Only `POST /runs/:id/approve` (the "Build
+it" button) sets `runs.approved = 1` and lets the pipeline past the discuss gate into
+architect → builders → verifier. `yolo` skips the gate; so do modes `full`/`plan`/`design`.
+
+The discuss call logs its raw prompt/completion under role `interface_io`, deliberately
+distinct from the curated `interface` reply — otherwise the harness's own I/O echo would be
+fed back into the next turn's transcript as if the user had said it.
 
 ## Mission control UI
 
@@ -158,25 +171,40 @@ now — the gateway registers adapters once at boot; hot-reloading a live bot co
 materially different feature than live-swapping a stateless API key, deliberately out of
 scope for this pass.
 
+## Connection testing (`server/probe.ts`)
+
+Every credential has a **Test** button that makes a real call, because saved ≠ working:
+
+- **API keys** — two steps, deliberately. Step 1 lists models (proves auth). Step 2 attempts
+  a 1-token completion (proves the account can actually *generate*). This matters: a
+  suspended Moonshot account returns **200 from `/models` while every real generation 429s**,
+  so an auth-only check reports a confident, wrong "connected". The two-step probe reports
+  `key is valid but generation failed: account out of credit / suspended` instead.
+- **MCP servers** — actually spawns the process over stdio and lists its tools; the result
+  (and discovered tool names) is persisted on the row.
+- **Custom providers** — hits `{base_url}/models`, so an unreachable localhost server says
+  so plainly rather than failing later mid-run.
+
+Keys are never echoed back — not in responses, not inside error strings.
+
 ## Notes for future work
 
-- Settings-managed keys/MCP servers are DB-only right now — no way to *test* a saved key
-  against the real provider from the UI (a "ping" button per row). Structurally easy to add,
-  just needs a minimal probe call per vendor.
-- MCP servers are stored/toggleable but not yet consumed by the agent tool-use loop — see
-  above. That's the deeper lift: each provider has a different function/tool-calling wire
-  format (Anthropic tool_use blocks vs. OpenAI-style function calling, etc.), and it can't be
-  verified without a live key, which this environment doesn't currently have.
+- MCP servers are registered, testable, and consumed by the asset-studio stage, but **not yet
+  wired into the agent tool-use loop** — builders/interface can't call MCP tools mid-task.
+  That's the deeper lift: each provider has a different tool-calling wire format (Anthropic
+  `tool_use` blocks vs. OpenAI function calling), and it can't be verified end to end without
+  a live generating key, which this environment doesn't currently have.
+- Telegram/Discord tokens still can't be tested from the UI (they'd need a live bot session).
 - `memory_repo` doesn't get the same credential-selector/validation treatment as code_repos
   yet — same git-auth.ts module would cover it, just not wired into that field's UI.
 - No git-diff view yet for "Code changes" — it currently lists artifact files (path + kind),
   not a real diff. A `GET /runs/:id/diff` endpoint would enable a proper per-file diff view.
-- Provider keys: only Moonshot is configured in this environment as of writing (via `.env`,
-  now also settable in Settings), and that account is suspended (429, insufficient balance) —
-  expect runs to fail at the first Interface AI call until keys are refreshed. The UI handles
-  this gracefully (see Permissions / Interface & Crew panels), it's an account/billing issue,
-  not a bug. Note: `OPENAI_API_KEY` also reads as present in this environment's process env
-  even though it's not in the committed `.env.example` — likely inherited from the host shell,
-  not this project; worth confirming it's actually meant for Foreman before relying on it.
+- Provider keys: only Moonshot is configured here (via `.env`, now also settable in
+  Settings), and that account is **suspended for generation** — confirmed by the probe, not
+  guessed. Every run fails at the first Interface AI call until it's topped up or another key
+  is added. That's billing, not a bug.
+- `OPENAI_API_KEY` sometimes reads as "set" depending on which shell launched the server — it
+  is **not** in `.env`, it's inherited from the host environment. That's why the settings UI
+  says "from environment" rather than "from .env"; don't assume it belongs to this project.
 - Do not build DeFi/trading-product features — any "Rovik Capital" / fund-style prompts in
   the run history are stray test data from earlier sessions, not a real requirement.

@@ -5,7 +5,7 @@ export const state = {
   activeRun: null,     // run id | null
   projects: [],        // ProjectRow[] (+cost_usd)
   runs: [],            // RunRow[]
-  mode: "full",        // full | plan | design — next dispatch
+  mode: "discuss",     // discuss | full | plan | design — next dispatch
   yolo: false,         // bypass permission gates — next dispatch
   roster: {},          // slot -> {model, phase, at}
 };

@@ -153,6 +153,50 @@ describe("Store", () => {
     expect(store.listApiKeyNames()).toHaveLength(0);
   });
 
+  it("spendReport aggregates by model, run and day, scoped per project", () => {
+    const a = store.createRun("project a work", { product: "alpha" });
+    const b = store.createRun("project b work", { product: "beta" });
+    const cost = (runId: string, model: string, slot: string, usd: number) =>
+      store.addCost({ runId, slot, model, promptTokens: 100, completionTokens: 50, costUsd: usd });
+
+    cost(a.id, "claude-sonnet-5", "pm", 0.10);
+    cost(a.id, "claude-sonnet-5", "pm", 0.05);
+    cost(a.id, "kimi-k3", "builder_a", 0.02);
+    cost(b.id, "kimi-k3", "builder_a", 0.99);
+
+    const all = store.spendReport();
+    expect(all.totals.cost).toBeCloseTo(1.16, 6);
+    expect(all.totals.calls).toBe(4);
+    expect(all.totals.promptTokens).toBe(400);
+    expect(all.totals.completionTokens).toBe(200);
+
+    const alpha = store.spendReport("alpha");
+    expect(alpha.totals.cost).toBeCloseTo(0.17, 6);
+    expect(alpha.totals.calls).toBe(3);
+    // grouped by model, most expensive first
+    expect(alpha.byModel[0]!.model).toBe("claude-sonnet-5");
+    expect(alpha.byModel[0]!.cost).toBeCloseTo(0.15, 6);
+    expect(alpha.byModel[0]!.calls).toBe(2);
+    expect(alpha.byModel[1]!.model).toBe("kimi-k3");
+    // beta's spend never leaks into alpha
+    expect(alpha.byRun).toHaveLength(1);
+    expect(alpha.byRun[0]!.run_id).toBe(a.id);
+    expect(alpha.byDay.reduce((s, d) => s + d.cost, 0)).toBeCloseTo(0.17, 6);
+  });
+
+  it("custom providers: create, look up by name, delete", () => {
+    const p = store.createCustomProvider({
+      name: "ollama", label: "Ollama (local)", baseUrl: "http://localhost:11434/v1",
+    });
+    expect(p.wire).toBe("openai");
+    expect(p.api_key).toBeNull();
+    expect(store.getCustomProviderByName("ollama")?.base_url).toBe("http://localhost:11434/v1");
+    expect(store.getCustomProviderByName("nope")).toBeUndefined();
+    expect(store.listCustomProviders()).toHaveLength(1);
+    expect(store.deleteCustomProvider(p.id)).toBe(true);
+    expect(store.listCustomProviders()).toHaveLength(0);
+  });
+
   it("mcp servers: create, list, toggle, delete", () => {
     const s = store.createMcpServer({ name: "higgsfield", kind: "video", command: "higgsfield-mcp", args: ["--fast"] });
     expect(s.enabled).toBe(1);
