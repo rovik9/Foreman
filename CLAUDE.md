@@ -256,12 +256,15 @@ a far worse failure than a reconnect.
 
 ## Notes for future work
 
-- Same-level tasks can still write the *same file* concurrently. The workspace lock serialises
-  commands, not writes; disjointness relies on the architect's dependency declarations, which
-  is a model-behaviour guarantee rather than an enforced one.
-- Telegram/Discord tokens still can't be tested from the UI (they'd need a live bot session).
-- No git-diff view for "Code changes" — it lists artifact paths, not a real diff.
+- **Parallel write conflicts are detected, not prevented.** The workspace lock serialises
+  commands; two same-level tasks can still write the same file. `tools.ts` tracks
+  path → last-writer per workspace and raises `onWriteConflict`, which the runner turns into a
+  system message naming both tasks — so the later write still wins, but it's visible and
+  diagnosable instead of silent. Genuine prevention needs the architect to sequence the tasks,
+  which is a model-behaviour guarantee we can't enforce from here.
 - `memory_repo` doesn't get the credential-selector/validation treatment that `code_repos` do.
+- Discord/Telegram tokens are now *validated* (see probe.ts) but a live bot session still only
+  starts at boot, so changing them needs a restart.
 - `memory_repo` doesn't get the same credential-selector/validation treatment as code_repos
   yet — same git-auth.ts module would cover it, just not wired into that field's UI.
 - No git-diff view yet for "Code changes" — it currently lists artifact files (path + kind),

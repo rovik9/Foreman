@@ -16,7 +16,7 @@ import { AssetStudio } from "../mcp/studio.js";
 import { loadMcpTools } from "../mcp/tools.js";
 import { recallBlock } from "../memory/recall.js";
 import { Router } from "../router/router.js";
-import type { McpTool } from "../agents/tools.js";
+import { forgetWorkspace, type McpTool } from "../agents/tools.js";
 import type { MessageRow, Store, TaskRow } from "../store/db.js";
 import { topoOrder } from "./dag.js";
 import { gatesSummary, runGates } from "./verifier.js";
@@ -456,6 +456,9 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
     } catch {
       // documentation must never mask the original failure
     }
+  } finally {
+    // the run is over either way — drop its file-ownership table
+    forgetWorkspace(join(limits.sandbox.workspace_root, runId, "workspace"));
   }
 }
 
@@ -535,6 +538,27 @@ async function runTask(
             allowlist: limits.sandbox.shell_allowlist,
             commandTimeoutMs: limits.sandbox.command_timeout_ms,
             mcpTools,
+            taskId: task.id,
+            // parallel tasks are meant to touch disjoint files; when the
+            // architect gets that wrong, say so instead of silently clobbering
+            onWriteConflict: ({ path, otherTaskId }) => {
+              const other = store.getTask(otherTaskId);
+              store.addMessage({
+                runId,
+                taskId: task.id,
+                role: "system",
+                content:
+                  `Write conflict on "${path}": also written by task "${other.description}". ` +
+                  `These ran in parallel, so the later write won. If that's wrong, the two ` +
+                  `tasks should have been sequenced.`,
+              });
+              bus.emit({
+                type: "message",
+                runId,
+                taskId: task.id,
+                data: { role: "system", conflict: path, otherTaskId },
+              });
+            },
           },
           feedback,
           recentUserSteering(store, runId),

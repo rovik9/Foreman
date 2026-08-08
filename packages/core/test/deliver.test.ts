@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { collectFiles, deliverRunCode } from "../src/server/deliver.js";
+import { collectFiles, deliverRunCode, diffRunAgainstCheckout } from "../src/server/deliver.js";
 import type { ProjectRow, RunRow } from "../src/store/db.js";
 
 function project(dirs: string[]): ProjectRow {
@@ -96,6 +96,37 @@ describe("deliverRunCode", () => {
     const result = deliverRunCode(run(ws), project([checkout]));
     expect(result.delivered).toBe(false);
     expect(result.error).toMatch(/nothing to deliver/);
+  });
+
+  it("diffs new and modified files against the checkout", () => {
+    writeFileSync(join(checkout, "existing.js"), "line one\nline two\nline three");
+    writeFileSync(join(ws, "existing.js"), "line one\nline TWO changed\nline three");
+    writeFileSync(join(ws, "brand-new.js"), "hello\nworld");
+    writeFileSync(join(checkout, "untouched.js"), "same");
+    writeFileSync(join(ws, "untouched.js"), "same");
+
+    const diffs = diffRunAgainstCheckout(run(ws), project([checkout]));
+    const by = (p: string) => diffs.find((d) => d.path === p)!;
+
+    expect(by("brand-new.js").status).toBe("added");
+    expect(by("brand-new.js").added).toBe(2);
+
+    const mod = by("existing.js");
+    expect(mod.status).toBe("modified");
+    expect(mod.added).toBe(1);
+    expect(mod.removed).toBe(1);
+    expect(mod.hunk).toContain("- line two");
+    expect(mod.hunk).toContain("+ line TWO changed");
+    expect(mod.hunk).toContain("  line one"); // unchanged context kept
+
+    expect(by("untouched.js").status).toBe("unchanged");
+  });
+
+  it("treats everything as added when the project has no checkout", () => {
+    writeFileSync(join(ws, "a.js"), "x");
+    const diffs = diffRunAgainstCheckout(run(ws), project([]));
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0]!.status).toBe("added");
   });
 
   it("handles a run with no registered project", () => {

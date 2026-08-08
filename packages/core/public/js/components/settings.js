@@ -4,8 +4,13 @@ const esc = (s) => { const d = document.createElement("div"); d.textContent = s;
 // "env" can come from .env *or* the shell that launched the server — don't
 // claim .env specifically, that's how a stray inherited var looks configured
 const SOURCE_LABEL = { settings: "configured", env: "from environment", unset: "not set" };
-/** Keys with no vendor endpoint we can safely probe — hide the Test button. */
-const UNTESTABLE = new Set(["HIGGSFIELD_API_KEY"]);
+/** Keys with nothing to probe — plain IDs, or no public validation endpoint. */
+const UNTESTABLE = new Set([
+  "HIGGSFIELD_API_KEY",
+  "TELEGRAM_ALLOWED_USER_IDS",
+  "DISCORD_GUILD_ID",
+  "DISCORD_ALLOWED_USER_IDS",
+]);
 
 async function renderKeys() {
   const keys = await api.listApiKeys();

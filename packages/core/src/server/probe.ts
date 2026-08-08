@@ -35,10 +35,20 @@ const KEY_PROBES: Record<string, { url: string; headers: (key: string) => Record
     url: "https://api.github.com/user",
     headers: (k) => ({ Authorization: `Bearer ${k}`, "User-Agent": "foreman" }),
   },
+  // Bot tokens can't be *used* without opening a live session, but they can be
+  // validated — which is the part that actually goes wrong (typo'd token).
+  DISCORD_BOT_TOKEN: {
+    url: "https://discord.com/api/v10/users/@me",
+    headers: (k) => ({ Authorization: `Bot ${k}` }),
+  },
 };
 
+/** Telegram puts the token in the path, so it needs its own shape. */
+const TELEGRAM_PROBE = (key: string): string =>
+  `https://api.telegram.org/bot${encodeURIComponent(key)}/getMe`;
+
 export function isProbeable(name: string): boolean {
-  return name in KEY_PROBES;
+  return name in KEY_PROBES || name === "TELEGRAM_BOT_TOKEN";
 }
 
 /** Chat endpoint per vendor, used for the generation half of the probe. */
@@ -79,6 +89,8 @@ function explainStatus(status: number, body: string): string {
  * really work. Never echoes the key back, even inside an error string.
  */
 export async function probeApiKey(name: string, key: string): Promise<ProbeResult> {
+  if (name === "TELEGRAM_BOT_TOKEN") return probeTelegram(key);
+
   const probe = KEY_PROBES[name];
   if (!probe) return { ok: false, error: "no connection test available for this key" };
 
@@ -121,6 +133,29 @@ export async function probeApiKey(name: string, key: string): Promise<ProbeResul
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, error: msg.includes("abort") ? "timed out after 20s" : msg.slice(0, 160) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Validates a bot token and names the bot back, so a typo is obvious. */
+async function probeTelegram(key: string): Promise<ProbeResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const res = await fetch(TELEGRAM_PROBE(key), { signal: controller.signal });
+    const body = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      description?: string;
+      result?: { username?: string };
+    };
+    if (res.ok && body.ok) {
+      return { ok: true, detail: `bot @${body.result?.username ?? "unknown"} — token valid` };
+    }
+    return { ok: false, error: body.description ?? `telegram returned ${res.status}` };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg.includes("abort") ? "timed out after 12s" : msg.slice(0, 160) };
   } finally {
     clearTimeout(timer);
   }

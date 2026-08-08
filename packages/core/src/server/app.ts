@@ -8,7 +8,7 @@ import type { GitCredential } from "./git-auth.js";
 import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
 import { DEFAULT_RUN_MODE, type ProjectRow } from "../store/db.js";
-import { deliverRunCode } from "./deliver.js";
+import { deliverRunCode, diffRunAgainstCheckout } from "./deliver.js";
 import { checkRepoAccess, cloneRepo, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
 import { applyOverride, isValidOverrideKey, resetOverride } from "../config/overrides.js";
@@ -201,6 +201,22 @@ export function createApp(deps: RunnerDeps): Hono {
     }
 
     return c.json({ ...store.getProject(slug), clone_results: cloneResults }, 201);
+  });
+
+  /** Review what a run would change before accepting it. */
+  app.get("/runs/:id/diff", (c) => {
+    try {
+      const run = store.getRun(c.req.param("id"));
+      let project;
+      try {
+        project = store.getProject(run.product ?? "");
+      } catch {
+        // unregistered project — everything reads as newly added
+      }
+      return c.json(diffRunAgainstCheckout(run, project));
+    } catch {
+      return c.json({ error: "not found" }, 404);
+    }
   });
 
   app.post("/runs/:id/accept", (c) => {

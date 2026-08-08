@@ -24,6 +24,39 @@ export interface ToolContext {
   commandTimeoutMs: number;
   /** Tools from MCP servers the user connected in Settings. */
   mcpTools?: McpTool[];
+  /** Which task is holding this context — used for write-conflict detection. */
+  taskId?: string;
+  /** Called when a task overwrites a file another live task wrote this level. */
+  onWriteConflict?: (info: { path: string; otherTaskId: string }) => void;
+}
+
+/**
+ * path -> taskId of the last writer, per workspace.
+ *
+ * The workspace lock serialises *commands*, but two parallel builders can still
+ * write the same file — disjointness is only ever a promise made by the
+ * architect's dependency graph, not something the sandbox can enforce. Rather
+ * than let one silently clobber the other, we detect it and surface it.
+ */
+const fileOwners = new Map<string, Map<string, string>>();
+
+function recordWrite(ctx: ToolContext, rel: string): void {
+  if (!ctx.taskId) return;
+  let owners = fileOwners.get(ctx.workspace);
+  if (!owners) {
+    owners = new Map();
+    fileOwners.set(ctx.workspace, owners);
+  }
+  const prior = owners.get(rel);
+  if (prior && prior !== ctx.taskId) {
+    ctx.onWriteConflict?.({ path: rel, otherTaskId: prior });
+  }
+  owners.set(rel, ctx.taskId);
+}
+
+/** Drops a finished run's ownership table so the map doesn't grow forever. */
+export function forgetWorkspace(workspace: string): void {
+  fileOwners.delete(workspace);
 }
 
 export interface ToolCall {
@@ -149,10 +182,12 @@ export async function executeTool(ctx: ToolContext, call: ToolCall): Promise<Too
         return { ok: true, output: clip(readFileSync(abs, "utf8")) };
       }
       case "write_file": {
-        const abs = safePath(ctx.workspace, String(call.args.path ?? ""));
+        const rel = String(call.args.path ?? "");
+        const abs = safePath(ctx.workspace, rel);
         mkdirSync(dirname(abs), { recursive: true });
         writeFileSync(abs, String(call.args.content ?? ""), "utf8");
-        return { ok: true, output: `wrote ${call.args.path}` };
+        recordWrite(ctx, relative(ctx.workspace, abs));
+        return { ok: true, output: `wrote ${rel}` };
       }
       case "list_files":
         return listFiles(ctx, String(call.args.path ?? "."));

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  changedSince, executeTool, runCommand, safePath, workspaceFiles, workspaceSnapshot,
+  changedSince, executeTool, forgetWorkspace, runCommand, safePath, workspaceFiles, workspaceSnapshot,
   type ToolContext,
 } from "../src/agents/tools.js";
 import { pendingWorkspaceLocks } from "../src/util/workspace-lock.js";
@@ -188,5 +188,48 @@ describe("builder sandbox", () => {
     writeFileSync(join(ws, "node_modules/junk.js"), "no");
 
     expect(workspaceFiles(ws)).toEqual(["README.md", "src/main.ts"]);
+  });
+});
+
+describe("parallel write conflicts", () => {
+  let ws: string;
+  beforeEach(() => { ws = mkdtempSync(join(tmpdir(), "foreman-conflict-")); });
+  afterEach(() => { forgetWorkspace(ws); rmSync(ws, { recursive: true, force: true }); });
+
+  const ctxFor = (taskId: string, onWriteConflict: (i: { path: string; otherTaskId: string }) => void) => ({
+    workspace: ws, allowlist: ["node"], commandTimeoutMs: 5000, taskId, onWriteConflict,
+  });
+
+  it("flags two parallel tasks writing the same file", async () => {
+    const hits: { path: string; otherTaskId: string }[] = [];
+    const push = (i: { path: string; otherTaskId: string }) => hits.push(i);
+
+    await executeTool(ctxFor("task-a", push), {
+      tool: "write_file", args: { path: "shared.ts", content: "from a" },
+    });
+    await executeTool(ctxFor("task-b", push), {
+      tool: "write_file", args: { path: "shared.ts", content: "from b" },
+    });
+
+    expect(hits).toEqual([{ path: "shared.ts", otherTaskId: "task-a" }]);
+    // last write still wins — we surface it, we don't silently drop work
+    expect(readFileSync(join(ws, "shared.ts"), "utf8")).toBe("from b");
+  });
+
+  it("does not flag a task rewriting its own file", async () => {
+    const hits: unknown[] = [];
+    const push = () => hits.push(1);
+    const ctx = ctxFor("task-a", push);
+    await executeTool(ctx, { tool: "write_file", args: { path: "mine.ts", content: "v1" } });
+    await executeTool(ctx, { tool: "write_file", args: { path: "mine.ts", content: "v2" } });
+    expect(hits).toHaveLength(0);
+  });
+
+  it("does not flag different files", async () => {
+    const hits: unknown[] = [];
+    const push = () => hits.push(1);
+    await executeTool(ctxFor("a", push), { tool: "write_file", args: { path: "a.ts", content: "x" } });
+    await executeTool(ctxFor("b", push), { tool: "write_file", args: { path: "b.ts", content: "y" } });
+    expect(hits).toHaveLength(0);
   });
 });

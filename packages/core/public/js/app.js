@@ -42,7 +42,7 @@ async function refresh() {
     document.getElementById("cost-session").textContent = "$0.0000";
     renderTasks([]);
     renderRoster(null, []);
-    renderChanges(null, []);
+    await renderChanges(null, []);
     renderAssets(null, []);
     renderPromptings([]);
     renderProgress(null, []);
@@ -62,7 +62,7 @@ async function refresh() {
   renderProgress(d.run, d.tasks);
   renderTasks(d.tasks);
   renderRoster(d.run, d.tasks);
-  renderChanges(state.activeRun, d.artifacts);
+  await renderChanges(state.activeRun, d.artifacts);
   renderAssets(state.activeRun, d.artifacts);
   renderPromptings(d.messages);
   updateFooter(d.run);

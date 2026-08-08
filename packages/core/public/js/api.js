@@ -22,6 +22,7 @@ export const api = {
     req(`/runs/${runId}/chat`, { method: "POST", body: JSON.stringify({ message }) }),
   stopRun: (runId) => req(`/runs/${runId}/stop`, { method: "POST" }),
   approveRun: (runId) => req(`/runs/${runId}/approve`, { method: "POST" }),
+  runDiff: (runId) => req(`/runs/${runId}/diff`),
   topUpBudget: (runId, add_usd) =>
     req(`/runs/${runId}/budget`, { method: "POST", body: JSON.stringify({ add_usd }) }),
   acceptRun: (runId) => req(`/runs/${runId}/accept`, { method: "POST" }),

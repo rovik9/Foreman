@@ -563,6 +563,27 @@ a:hover { text-decoration: underline; }
 }
 .change-path { font: 12px var(--mono); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* real diffs against the project checkout */
+.diff { margin-bottom: 6px; border: 1px solid var(--glass-border); border-radius: var(--r-xs); background: rgba(255,255,255,.015); }
+.diff summary {
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer;
+  list-style: none; transition: background .15s var(--ease);
+}
+.diff summary::-webkit-details-marker { display: none; }
+.diff summary:hover { background: var(--glass-hover); }
+.diff[data-status="added"] { border-left: 3px solid var(--ok); }
+.diff[data-status="modified"] { border-left: 3px solid var(--warn); }
+.diff-stat { margin-left: auto; font: 700 10.5px var(--mono); white-space: nowrap; }
+.diff-body {
+  margin: 0; padding: 8px 10px; border-top: 1px solid var(--glass-border);
+  font: 11px/1.55 var(--mono); white-space: pre; overflow-x: auto;
+  max-height: 340px; overflow-y: auto; background: rgba(0,0,0,.28);
+}
+.diff-body span { display: block; }
+.d-add { color: var(--ok); }
+.d-del { color: var(--err); }
+.d-ctx { color: var(--text-4); }
+
 .prompt-msg { border-left: 3px solid var(--glass-border); border-radius: var(--r-sm); padding: 9px 11px; margin: 0 0 8px; }
 .prompt-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
 .prompt-head b { font: 700 10.5px var(--font); text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); }
