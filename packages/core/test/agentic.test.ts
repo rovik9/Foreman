@@ -127,6 +127,44 @@ describe("agentic builder", () => {
     expect(out.notes).toMatch(/stopped|step limit/);
   }, 30_000);
 
+  it("can call a connected MCP tool, and the tool is advertised in the prompt", async () => {
+    const rig = makeRig({
+      "build-model": [
+        JSON.stringify({ tool: "higgsfield.render", args: { prompt: "a logo" } }),
+        JSON.stringify({ done: true, notes: "rendered via mcp" }),
+      ],
+    });
+    const run = rig.store.createRun("agentic");
+    const seen: Record<string, unknown>[] = [];
+    const withMcp = {
+      ...ctx(),
+      mcpTools: [
+        {
+          name: "higgsfield.render",
+          description: "render a video or image",
+          call: async (args: Record<string, unknown>) => {
+            seen.push(args);
+            return { ok: true, output: "saved /tmp/out.mp4" };
+          },
+        },
+      ],
+    };
+    const steps: { tool: string; ok: boolean; output: string }[] = [];
+
+    await buildTaskAgentic(
+      rig.harness, run.id, task("t6"), SPEC, ws, withMcp, undefined, [], undefined,
+      { onStep: (s) => steps.push({ tool: s.tool, ok: s.ok, output: s.output }) },
+    );
+
+    // the tool really ran, with the model's args
+    expect(seen).toEqual([{ prompt: "a logo" }]);
+    expect(steps[0]).toMatchObject({ tool: "higgsfield.render", ok: true });
+    expect(steps[0]!.output).toContain("out.mp4");
+    // and the builder was told the tool exists
+    expect(rig.mock.calls[0]!.system).toContain("higgsfield.render");
+    expect(rig.mock.calls[0]!.system).toContain("render a video or image");
+  }, 30_000);
+
   it("honours a single-shot file set without burning a second call", async () => {
     const rig = makeRig({
       "build-model": [

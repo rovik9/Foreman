@@ -13,8 +13,10 @@ import type { ForemanConfig } from "../config/schema.js";
 import type { ForemanBus } from "../events/bus.js";
 import { documentRun } from "../journal/document.js";
 import { AssetStudio } from "../mcp/studio.js";
+import { loadMcpTools } from "../mcp/tools.js";
 import { recallBlock } from "../memory/recall.js";
 import { Router } from "../router/router.js";
+import type { McpTool } from "../agents/tools.js";
 import type { MessageRow, Store, TaskRow } from "../store/db.js";
 import { topoOrder } from "./dag.js";
 import { gatesSummary, runGates } from "./verifier.js";
@@ -316,8 +318,21 @@ export async function runPipeline(deps: RunnerDeps, runId: string): Promise<void
         return;
       }
 
+      // tools from the MCP servers the user connected in Settings — discovered
+      // once per level, best-effort: a server that's down contributes nothing
+      // rather than failing the run
+      const mcpTools = await loadMcpTools(
+        store.listEnabledMcpServers(),
+        (server, error) =>
+          store.addMessage({
+            runId,
+            role: "system",
+            content: `MCP server "${server}" unavailable: ${error}`,
+          }),
+      );
+
       const results = await runPool(ready, limits.max_parallel_builders, (task) =>
-        runTask(deps, runId, task, workspace, specForBuild),
+        runTask(deps, runId, task, workspace, specForBuild, mcpTools),
       );
 
       let escalation: TaskOutcome | undefined;
@@ -482,6 +497,7 @@ async function runTask(
   task: TaskRow,
   workspace: string,
   specForBuild: PmSpec,
+  mcpTools: McpTool[] = [],
 ): Promise<TaskOutcome> {
   const { config, store, bus, harness } = deps;
   const { limits } = config;
@@ -518,6 +534,7 @@ async function runTask(
             workspace,
             allowlist: limits.sandbox.shell_allowlist,
             commandTimeoutMs: limits.sandbox.command_timeout_ms,
+            mcpTools,
           },
           feedback,
           recentUserSteering(store, runId),

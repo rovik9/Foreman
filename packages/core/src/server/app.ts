@@ -7,7 +7,8 @@ import { streamSSE } from "hono/streaming";
 import type { GitCredential } from "./git-auth.js";
 import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
-import { DEFAULT_RUN_MODE } from "../store/db.js";
+import { DEFAULT_RUN_MODE, type ProjectRow } from "../store/db.js";
+import { deliverRunCode } from "./deliver.js";
 import { checkRepoAccess, cloneRepo, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
 import { applyOverride, isValidOverrideKey, resetOverride } from "../config/overrides.js";
@@ -210,21 +211,29 @@ export function createApp(deps: RunnerDeps): Hono {
         return c.json({ error: `run is ${run.status}, not completed` }, 400);
       }
       const product = run.product ?? "misc";
-      let repoUrl: string | undefined;
+      let project: ProjectRow | undefined;
       try {
-        repoUrl = store.getProject(product).repo_url ?? undefined;
+        project = store.getProject(product);
       } catch {
         // run not tied to a registered project — local-only
       }
+
+      // 1. the built code goes to the project's real checkout (this is the
+      //    part that used to be missing — work was stranded in the run dir)
+      const codeRepos = project ? (JSON.parse(project.code_repos) as string[]) : [];
+      const code = deliverRunCode(run, project, { remote: codeRepos[0] });
+
+      // 2. the memory/journal repo, as before
       if (!deps.memoryDir) {
-        return c.json({ committed: false, pushed: false, error: "no memory dir" });
+        return c.json({ code, committed: false, pushed: false, error: "no memory dir" });
       }
-      const result = syncProductRepo(
+      const memory = syncProductRepo(
         join(deps.memoryDir, "products", product),
         `accepted run ${id.slice(0, 8)} — $${run.cost_usd.toFixed(4)}`,
-        repoUrl,
+        project?.repo_url ?? undefined,
       );
-      return c.json(result);
+      // top-level committed/pushed stay memory's, for backwards compatibility
+      return c.json({ ...memory, memory, code });
     } catch {
       return c.json({ error: "not found" }, 404);
     }

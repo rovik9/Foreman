@@ -117,12 +117,23 @@ function bindFooter() {
 
   document.getElementById("accept-btn").addEventListener("click", async () => {
     if (!state.activeRun) return;
-    const result = await api.acceptRun(state.activeRun);
-    window.alert(
-      result.pushed ? "Accepted — pushed to the project repo." :
-        result.committed ? "Accepted — committed locally (no remote configured)." :
-          `Nothing new to commit.${result.error ? ` (${result.error})` : ""}`,
-    );
+    const r = await api.acceptRun(state.activeRun);
+
+    // report the code delivery and the memory sync separately — they succeed
+    // and fail independently, and the code is the part the user cares about
+    const code = r.code?.delivered
+      ? `Code: ${r.code.files} file(s) → ${r.code.target}\n` +
+        (r.code.pushed ? "Pushed to the project repo."
+          : r.code.committed ? "Committed locally (no remote configured)."
+            : `Copied but not committed.${r.code.error ? ` (${r.code.error})` : ""}`)
+      : `Code not delivered: ${r.code?.error ?? "unknown reason"}`;
+
+    const mem = r.memory?.pushed ? "Memory: pushed."
+      : r.memory?.committed ? "Memory: committed locally."
+        : `Memory: nothing new.${r.memory?.error ? ` (${r.memory.error})` : ""}`;
+
+    window.alert(`${code}\n\n${mem}`);
+    await refresh();
   });
 }
 

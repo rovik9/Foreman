@@ -5,7 +5,7 @@ import type { TaskRow } from "../store/db.js";
 import type { AgentHarness } from "./harness.js";
 import { parseJson } from "./json.js";
 import type { PmSpec } from "./pm.js";
-import { changedSince, executeTool, workspaceSnapshot, TOOL_GUIDE, type ToolContext } from "./tools.js";
+import { changedSince, executeTool, toolGuideFor, workspaceSnapshot, type ToolContext } from "./tools.js";
 
 export const BuildOutputSchema = z.object({
   files: z
@@ -86,11 +86,12 @@ export async function buildTask(
   return out;
 }
 
-const AGENTIC_SYSTEM = `You are a Builder in an AI software company called Foreman.
+const agenticSystem = (ctx: ToolContext): string =>
+  `You are a Builder in an AI software company called Foreman.
 You get one task, the project spec, and sometimes reviewer feedback from a failed
 attempt. You are working in a real workspace on a real machine.
 
-${TOOL_GUIDE}
+${toolGuideFor(ctx)}
 
 Finish only when the work is done AND you have run something that proves it.`;
 
@@ -156,7 +157,7 @@ export async function buildTaskAgentic(
       taskId: task.id,
       slot: task.slot ?? harness.roleSlot("builder"),
       role: "builder",
-      system: AGENTIC_SYSTEM,
+      system: agenticSystem(ctx),
       input: transcript.join("\n\n---\n\n"),
       maxTokens: 8192,
     });

@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/server/app.js";
 import { HAPPY_SCRIPT, makeRig } from "./helpers.js";
@@ -94,6 +96,36 @@ describe("server", () => {
     expect(body.messages.some((m) => m.role === "interface")).toBe(true);
     // nothing downstream of the Interface AI was ever called
     expect(rig.mock.calls.every((c) => c.model === "pm-model")).toBe(true);
+  });
+
+  it("accept delivers the built code into the project checkout, not just memory", async () => {
+    const rig = makeRig({});
+    const app = createApp({ ...rig, memoryDir: join(rig.dir, "memory") });
+
+    // a project with a real local checkout, as `POST /projects` would clone
+    const checkout = join(rig.dir, "checkout");
+    mkdirSync(checkout, { recursive: true });
+    rig.store.createProject({ name: "Ship It", slug: "ship-it", workspaceDirs: [checkout] });
+
+    // a completed run whose workspace holds the built code
+    const run = rig.store.createRun("build the widget", { mode: "full", product: "ship-it" });
+    const ws = join(rig.dir, "runs", run.id, "workspace");
+    mkdirSync(ws, { recursive: true });
+    writeFileSync(join(ws, "widget.js"), "module.exports = 42;");
+    rig.store.setRunWorkspace(run.id, ws);
+    rig.store.setRunStatus(run.id, "completed");
+
+    const res = await app.request(`/runs/${run.id}/accept`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      code: { delivered: boolean; files: number; committed: boolean; target: string };
+    };
+
+    expect(body.code.delivered).toBe(true);
+    expect(body.code.files).toBe(1);
+    expect(body.code.committed).toBe(true);
+    // the file really landed in the user's checkout
+    expect(readFileSync(join(checkout, "widget.js"), "utf8")).toBe("module.exports = 42;");
   });
 
   it("approve releases the crew", async () => {

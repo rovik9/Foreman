@@ -11,10 +11,19 @@ import { withWorkspaceLock } from "../util/workspace-lock.js";
  * as an argv array to spawn().
  */
 
+export interface McpTool {
+  /** `<server>.<tool>` — namespaced so two servers can expose the same name. */
+  name: string;
+  description: string;
+  call: (args: Record<string, unknown>) => Promise<ToolResult>;
+}
+
 export interface ToolContext {
   workspace: string;
   allowlist: string[];
   commandTimeoutMs: number;
+  /** Tools from MCP servers the user connected in Settings. */
+  mcpTools?: McpTool[];
 }
 
 export interface ToolCall {
@@ -147,8 +156,11 @@ export async function executeTool(ctx: ToolContext, call: ToolCall): Promise<Too
       }
       case "list_files":
         return listFiles(ctx, String(call.args.path ?? "."));
-      default:
+      default: {
+        const mcp = ctx.mcpTools?.find((t) => t.name === call.tool);
+        if (mcp) return await mcp.call(call.args);
         return { ok: false, output: `unknown tool "${call.tool}"` };
+      }
     }
   } catch (err) {
     return { ok: false, output: err instanceof Error ? err.message : String(err) };
@@ -204,6 +216,19 @@ export function workspaceFiles(workspace: string): string[] {
     // workspace may not exist yet
   }
   return found.sort();
+}
+
+/** Appends the connected MCP servers' tools to the prompt, so a builder can
+ *  actually call what the user wired up in Settings. */
+export function toolGuideFor(ctx: ToolContext): string {
+  if (!ctx.mcpTools?.length) return TOOL_GUIDE;
+  const extra = ctx.mcpTools
+    .map((t) => `{ "tool": "${t.name}", "args": { … } }   ${t.description}`)
+    .join("\n");
+  return `${TOOL_GUIDE}
+
+Connected MCP tools (from the user's Settings) — call them the same way:
+${extra}`;
 }
 
 export const TOOL_GUIDE = `You have real tools. Work like an engineer at a terminal:

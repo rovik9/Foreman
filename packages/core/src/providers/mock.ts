@@ -11,7 +11,8 @@ import type {
  */
 export class MockProvider implements Provider {
   private readonly queues: Record<string, string[]>;
-  readonly calls: { model: string; input: string }[] = [];
+  /** `system` is recorded too, so tests can assert what an agent was told. */
+  readonly calls: { model: string; input: string; system: string }[] = [];
 
   constructor(script: Record<string, string[]>) {
     this.queues = structuredClone(script);
@@ -23,6 +24,7 @@ export class MockProvider implements Provider {
     this.calls.push({
       model: opts.model,
       input: messages[messages.length - 1]?.content ?? "",
+      system: messages.find((m) => m.role === "system")?.content ?? "",
     });
     return Promise.resolve({
       content,

@@ -232,14 +232,36 @@ Every credential has a **Test** button that makes a real call, because saved ≠
 
 Keys are never echoed back — not in responses, not inside error strings.
 
+## Accept delivers the code (`server/deliver.ts`)
+
+`POST /runs/:id/accept` does two independent things and reports them separately:
+
+1. **Code** — copies the run workspace into the project's first `workspace_dirs` entry (the
+   checkout cloned at project creation), then commits and pushes it. Skips `node_modules`,
+   `.git`, `dist`, `coverage`. This used to not exist: everything a run built was stranded in
+   `runs/<id>/workspace` forever, because accept only ever synced the memory repo.
+2. **Memory** — the journal/memory repo, as before.
+
+Either can fail without the other; the response carries `{ code, memory }` plus the legacy
+top-level `committed`/`pushed` (memory's) for compatibility.
+
+## MCP tools reach the builders (`mcp/tools.ts`)
+
+Enabled MCP servers are discovered once per DAG level and their tools handed to every builder
+as callable tools, namespaced `<server>.<tool>` so two servers can expose the same name. The
+tool list is appended to the builder's system prompt, so the model knows what exists. A server
+that's down contributes no tools and logs a system message — it never fails the run.
+Connections are per-call rather than pooled: slower, but a pooled stdio child dying mid-run is
+a far worse failure than a reconnect.
+
 ## Notes for future work
 
-- MCP servers are registered, testable, and consumed by the asset-studio stage, but **not yet
-  wired into the agent tool-use loop** — builders/interface can't call MCP tools mid-task.
-  That's the deeper lift: each provider has a different tool-calling wire format (Anthropic
-  `tool_use` blocks vs. OpenAI function calling), and it can't be verified end to end without
-  a live generating key, which this environment doesn't currently have.
+- Same-level tasks can still write the *same file* concurrently. The workspace lock serialises
+  commands, not writes; disjointness relies on the architect's dependency declarations, which
+  is a model-behaviour guarantee rather than an enforced one.
 - Telegram/Discord tokens still can't be tested from the UI (they'd need a live bot session).
+- No git-diff view for "Code changes" — it lists artifact paths, not a real diff.
+- `memory_repo` doesn't get the credential-selector/validation treatment that `code_repos` do.
 - `memory_repo` doesn't get the same credential-selector/validation treatment as code_repos
   yet — same git-auth.ts module would cover it, just not wired into that field's UI.
 - No git-diff view yet for "Code changes" — it currently lists artifact files (path + kind),
