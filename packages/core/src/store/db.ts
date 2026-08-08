@@ -1,6 +1,14 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 
+/**
+ * Single source of truth for the default run mode. Every entry point (HTTP,
+ * Telegram, Discord) must agree: a prompt is discussed with the Interface AI
+ * before the crew is dispatched. This lived in two places once and the DM
+ * gateway silently skipped the discuss gate.
+ */
+export const DEFAULT_RUN_MODE = "discuss";
+
 export type RunStatus =
   | "queued"
   | "running"
@@ -331,7 +339,7 @@ export class Store {
       .prepare(
         "INSERT INTO runs (id, prompt, product, mode, yolo) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(id, prompt, opts.product ?? null, opts.mode ?? "full", opts.yolo ? 1 : 0);
+      .run(id, prompt, opts.product ?? null, opts.mode ?? DEFAULT_RUN_MODE, opts.yolo ? 1 : 0);
     return this.getRun(id);
   }
 

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { withWorkspaceLock } from "../util/workspace-lock.js";
 
 export interface GateResult {
   gate: string;
@@ -89,7 +90,11 @@ export async function runGates(
       });
       continue;
     }
-    const { code, output } = await exec(command, workspace, GATE_TIMEOUT_MS);
+    // same lock the builders' tools use — a gate must not run while another
+    // parallel task is mid-`npm install` in this very directory
+    const { code, output } = await withWorkspaceLock(workspace, () =>
+      exec(command, workspace, GATE_TIMEOUT_MS),
+    );
     results.push({
       gate: command.slice(0, 2).join(" "),
       command,

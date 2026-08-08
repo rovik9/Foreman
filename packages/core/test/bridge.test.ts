@@ -5,6 +5,7 @@ import type {
   OutboundMessage,
   PlatformAdapter,
 } from "../src/gateway/types.js";
+import { DEFAULT_RUN_MODE } from "../src/store/db.js";
 import { makeRig } from "./helpers.js";
 
 /** Capturing fake adapter — the bridge tests exercise all logic through it. */
@@ -66,6 +67,11 @@ describe("GatewayBridge", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]!.prompt).toBe("build me a defi dashboard");
     expect(adapter.sent.at(-1)!.text).toContain("dispatched");
+    // A DM must not dump straight into the crew either. This defaulted to
+    // "full" while HTTP defaulted to "discuss", so Telegram/Discord silently
+    // skipped the discuss gate.
+    expect(runs[0]!.mode).toBe(DEFAULT_RUN_MODE);
+    expect(runs[0]!.approved).toBe(0);
   });
 
   it("plain text with an active running run becomes steering (no resume)", async () => {

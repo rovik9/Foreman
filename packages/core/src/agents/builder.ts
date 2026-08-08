@@ -5,7 +5,7 @@ import type { TaskRow } from "../store/db.js";
 import type { AgentHarness } from "./harness.js";
 import { parseJson } from "./json.js";
 import type { PmSpec } from "./pm.js";
-import { executeTool, workspaceFiles, TOOL_GUIDE, type ToolContext } from "./tools.js";
+import { changedSince, executeTool, workspaceSnapshot, TOOL_GUIDE, type ToolContext } from "./tools.js";
 
 export const BuildOutputSchema = z.object({
   files: z
@@ -129,6 +129,9 @@ export async function buildTaskAgentic(
   deps: AgenticDeps = {},
 ): Promise<BuildOutput> {
   const maxSteps = deps.maxSteps ?? 24;
+  // credit this task only with what it changes — the workspace is shared with
+  // every other task in the run
+  const before = workspaceSnapshot(workspace);
   const opening = [
     `Task: ${task.description}`,
     `Acceptance criteria: ${task.acceptance_criteria}`,
@@ -190,7 +193,7 @@ export async function buildTaskAgentic(
   }
 
   // whatever ended up on disk is the real output, regardless of what it claimed
-  const files = workspaceFiles(workspace).map((path) => ({ path, content: "" }));
+  const files = changedSince(workspace, before).map((path) => ({ path, content: "" }));
   return {
     files: files.length ? files : [{ path: ".foreman-empty", content: "" }],
     notes: notes || "reached the step limit without declaring completion",

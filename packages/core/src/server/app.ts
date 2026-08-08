@@ -7,9 +7,10 @@ import { streamSSE } from "hono/streaming";
 import type { GitCredential } from "./git-auth.js";
 import { syncProductRepo } from "../journal/gitsync.js";
 import { runPipeline, type RunnerDeps } from "../pipeline/runner.js";
+import { DEFAULT_RUN_MODE } from "../store/db.js";
 import { checkRepoAccess, cloneRepo, listDirectories } from "./fs.js";
 import { githubCreateRepo, scaffoldProjectRepo, slugify } from "./projects.js";
-import { applyOverride } from "../config/overrides.js";
+import { applyOverride, isValidOverrideKey, resetOverride } from "../config/overrides.js";
 import { loadConfig } from "../config/load.js";
 import { ENV_VAR_FOR } from "../providers/factory.js";
 import { isProbeable, probeApiKey, probeCustomProvider, probeMcpServer } from "./probe.js";
@@ -64,7 +65,7 @@ export function createApp(deps: RunnerDeps): Hono {
     if (!body.prompt?.trim()) return c.json({ error: "prompt required" }, 400);
     const mode = ["discuss", "full", "plan", "design"].includes(body.mode ?? "")
       ? body.mode!
-      : "discuss";
+      : DEFAULT_RUN_MODE;
     if (body.project?.trim()) {
       try {
         store.getProject(body.project.trim());
@@ -199,11 +200,6 @@ export function createApp(deps: RunnerDeps): Hono {
     }
 
     return c.json({ ...store.getProject(slug), clone_results: cloneResults }, 201);
-  });
-
-  app.delete("/projects/:slug", (c) => {
-    const removed = store.deleteProject(c.req.param("slug"));
-    return removed ? c.body(null, 204) : c.json({ error: "not found" }, 404);
   });
 
   app.post("/runs/:id/accept", (c) => {
@@ -516,14 +512,24 @@ export function createApp(deps: RunnerDeps): Hono {
   /** Drops the override and restores the value from config/*.yaml. */
   app.delete("/settings/config/:key", (c) => {
     const key = c.req.param("key");
+    if (!isValidOverrideKey(key)) return c.json({ error: `unknown setting "${key}"` }, 400);
+    if (!deps.configDir) return c.json({ error: "server has no config dir configured" }, 500);
+
+    // re-read the YAML before dropping the override, so a failure here leaves
+    // the stored override intact rather than half-reset
+    let fresh;
+    try {
+      fresh = loadConfig(deps.configDir);
+    } catch (err) {
+      return c.json(
+        { error: `could not re-read config: ${err instanceof Error ? err.message : String(err)}` },
+        500,
+      );
+    }
+    const problem = resetOverride(deps.config, fresh, key);
+    if (problem) return c.json({ error: problem }, 400);
     store.clearConfigOverride(key);
-    const fresh = loadConfig(deps.configDir ?? "config");
-    const err = applyOverride(deps.config, key, key.startsWith("limits.")
-      ? (fresh.limits as unknown as Record<string, unknown>)[key.slice("limits.".length)]
-      : key.startsWith("roles.")
-        ? fresh.models.roles[key.slice("roles.".length) as keyof typeof fresh.models.roles]
-        : fresh.memory.auto_push);
-    return err ? c.json({ error: err }, 400) : c.json({ ok: true });
+    return c.json({ ok: true });
   });
 
   /** Spend analytics — cost ledger aggregated per project (or whole workspace). */

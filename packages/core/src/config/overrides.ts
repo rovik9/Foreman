@@ -1,4 +1,9 @@
-import { LimitsConfigSchema, RoleConfigSchema, type ForemanConfig } from "./schema.js";
+import {
+  LimitsConfigSchema,
+  RoleConfigSchema,
+  RoleNameSchema,
+  type ForemanConfig,
+} from "./schema.js";
 
 /**
  * Config precedence: `config/*.yaml` provides defaults, anything edited in the
@@ -22,9 +27,12 @@ const LIMIT_KEYS = new Set([
   "judge_pass_score",
 ]);
 
+/** The engine only knows these roles; anything else would be dead config. */
+const ROLE_NAMES = new Set<string>(RoleNameSchema.options);
+
 export function isValidOverrideKey(key: string): boolean {
   if (key.startsWith("limits.")) return LIMIT_KEYS.has(key.slice("limits.".length));
-  if (key.startsWith("roles.")) return key.split(".").length === 2;
+  if (key.startsWith("roles.")) return ROLE_NAMES.has(key.slice("roles.".length));
   if (key === "memory.auto_push") return true;
   return false;
 }
@@ -73,6 +81,31 @@ export function applyOverride(
   }
 
   return `unknown setting "${key}"`;
+}
+
+/**
+ * Restores one setting to its `config/*.yaml` value. Kept here (rather than
+ * inline in the route) so the "what does the YAML say for this key" mapping
+ * lives next to the "how do I apply it" mapping and the two can't drift.
+ */
+export function resetOverride(
+  config: ForemanConfig,
+  fresh: ForemanConfig,
+  key: string,
+): string | null {
+  if (!isValidOverrideKey(key)) return `unknown setting "${key}"`;
+
+  if (key.startsWith("limits.")) {
+    const field = key.slice("limits.".length);
+    return applyOverride(config, key, (fresh.limits as unknown as Record<string, unknown>)[field]);
+  }
+  if (key.startsWith("roles.")) {
+    const role = key.slice("roles.".length) as keyof ForemanConfig["models"]["roles"];
+    const yamlRole = fresh.models.roles[role];
+    if (!yamlRole) return `"${role}" is not defined in config/models.yaml`;
+    return applyOverride(config, key, yamlRole);
+  }
+  return applyOverride(config, key, fresh.memory.auto_push);
 }
 
 /** Replays every stored override onto the freshly-loaded YAML config at boot. */

@@ -2,7 +2,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { executeTool, runCommand, safePath, workspaceFiles, type ToolContext } from "../src/agents/tools.js";
+import {
+  changedSince, executeTool, runCommand, safePath, workspaceFiles, workspaceSnapshot,
+  type ToolContext,
+} from "../src/agents/tools.js";
+import { pendingWorkspaceLocks } from "../src/util/workspace-lock.js";
 
 describe("builder sandbox", () => {
   let ws: string;
@@ -138,6 +142,43 @@ describe("builder sandbox", () => {
     expect(r.ok).toBe(false);
     expect(r.output).toMatch(/unknown tool/);
   });
+
+  it("credits a task only with the files it changed, not the whole workspace", async () => {
+    // a previous task's output already sitting in the shared workspace
+    writeFileSync(join(ws, "from-task-1.ts"), "earlier");
+    const before = workspaceSnapshot(ws);
+
+    await executeTool(ctx, { tool: "write_file", args: { path: "from-task-2.ts", content: "new" } });
+
+    const changed = changedSince(ws, before);
+    expect(changed).toEqual(["from-task-2.ts"]);
+    expect(changed).not.toContain("from-task-1.ts");
+  });
+
+  it("counts a rewritten file as changed", async () => {
+    writeFileSync(join(ws, "edit-me.ts"), "v1");
+    const before = workspaceSnapshot(ws);
+    await new Promise((r) => setTimeout(r, 12)); // mtime resolution
+    await executeTool(ctx, { tool: "write_file", args: { path: "edit-me.ts", content: "v2" } });
+
+    expect(changedSince(ws, before)).toContain("edit-me.ts");
+  });
+
+  it("does not leak a lock entry per command", async () => {
+    const start = pendingWorkspaceLocks();
+    await runCommand(ctx, ["node", "-e", "0"]);
+    await runCommand(ctx, ["node", "-e", "0"]);
+    await new Promise((r) => setTimeout(r, 20)); // let the cleanup microtask settle
+    expect(pendingWorkspaceLocks()).toBe(start);
+  }, 20_000);
+
+  it("keeps serialising after a command fails", async () => {
+    // a rejected/failed command must not wedge the queue for the next one
+    await runCommand(ctx, ["node", "-e", "process.exit(1)"]);
+    const after = await runCommand(ctx, ["node", "-e", "console.log('still works')"]);
+    expect(after.ok).toBe(true);
+    expect(after.output).toContain("still works");
+  }, 20_000);
 
   it("workspaceFiles reports what actually landed on disk", () => {
     mkdirSync(join(ws, "src"), { recursive: true });

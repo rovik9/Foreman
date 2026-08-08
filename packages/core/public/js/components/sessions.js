@@ -21,13 +21,16 @@ export async function renderSessions() {
       <div class="run-meta">${esc(r.mode ?? "full")}${r.yolo ? " · yolo" : ""} · $${r.cost_usd.toFixed(4)}</div>
     </div>`).join("") : '<div class="empty-hint">No runs yet — dispatch one below.</div>';
 
-  for (const el of document.querySelectorAll(".run-card")) {
+  // scoped to this list on purpose: the project tabs also use [data-del], and
+  // a document-wide query bound run-deletion to them as well
+  const list = document.getElementById("sessions-list");
+  for (const el of list.querySelectorAll(".run-card")) {
     el.addEventListener("click", (e) => {
       if (e.target.closest("[data-del]")) return;
       setActiveRun(el.dataset.runId);
     });
   }
-  for (const x of document.querySelectorAll("[data-del]")) {
+  for (const x of list.querySelectorAll("[data-del]")) {
     x.addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!window.confirm("Delete this run and everything in it? This can't be undone.")) return;

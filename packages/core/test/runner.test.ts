@@ -7,7 +7,7 @@ import { HAPPY_SCRIPT, makeRig } from "./helpers.js";
 describe("runPipeline", () => {
   it("runs the full loop: pm → architect → builders → judge → completed", async () => {
     const rig = makeRig(HAPPY_SCRIPT);
-    const run = rig.store.createRun("build me a landing page");
+    const run = rig.store.createRun("build me a landing page", { mode: "full" });
 
     await runPipeline(
       {
@@ -85,7 +85,7 @@ describe("runPipeline", () => {
       "build-model": HAPPY_SCRIPT["build-model"]!,
       "judge-model": HAPPY_SCRIPT["judge-model"]!,
     });
-    const run = rig.store.createRun("make the thing");
+    const run = rig.store.createRun("make the thing", { mode: "full" });
     // mirrors server flow: the prompt is always the first user message
     rig.store.addMessage({ runId: run.id, role: "user", content: "make the thing" });
 
@@ -142,7 +142,7 @@ describe("runPipeline", () => {
         JSON.stringify({ score: 0.9, pass: true, feedback: "page ok" }),
       ],
     });
-    const run = rig.store.createRun("landing page with a plan first");
+    const run = rig.store.createRun("landing page with a plan first", { mode: "full" });
 
     await runPipeline(
       { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },
@@ -350,7 +350,7 @@ describe("runPipeline", () => {
         JSON.stringify({ score: 0.9, pass: true, feedback: "ok" }),
       ],
     });
-    const run = rig.store.createRun("two independent files");
+    const run = rig.store.createRun("two independent files", { mode: "full" });
     rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
 
     await runPipeline(
@@ -367,7 +367,7 @@ describe("runPipeline", () => {
   it("paused_budget resumes after a top-up", async () => {
     const rig = makeRig(HAPPY_SCRIPT);
     rig.config.limits.max_cost_per_run_usd = 0.003; // pm+arch alone nearly exhaust it
-    const run = rig.store.createRun("budget squeeze");
+    const run = rig.store.createRun("budget squeeze", { mode: "full" });
     rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
     const deps = { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness };
 
@@ -404,7 +404,7 @@ describe("runPipeline", () => {
         status: "approved",
       });
     }
-    const run = rig.store.createRun("dark landing page");
+    const run = rig.store.createRun("dark landing page", { mode: "full" });
     rig.store.addMessage({ runId: run.id, role: "user", content: run.prompt });
 
     await runPipeline(
@@ -447,7 +447,7 @@ describe("runPipeline", () => {
         JSON.stringify({ score: 0.5, pass: false, feedback: "closer" }),
       ],
     });
-    const run = rig.store.createRun("do impossible");
+    const run = rig.store.createRun("do impossible", { mode: "full" });
 
     await runPipeline(
       { config: rig.config, store: rig.store, bus: rig.bus, harness: rig.harness },

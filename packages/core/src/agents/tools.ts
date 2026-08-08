@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { withWorkspaceLock } from "../util/workspace-lock.js";
 
 /**
  * The builder's hands. Every tool is jailed to one run's workspace directory
@@ -44,23 +45,6 @@ export function safePath(workspace: string, p: string): string {
     throw new Error(`path "${p}" escapes the workspace`);
   }
   return target;
-}
-
-/**
- * One command at a time per workspace. Parallel builders share a directory, so
- * two of them running `npm install` at once corrupts the lockfile and produces
- * failures that look like the model's fault but aren't. Writes are per-file and
- * the architect declares deps so same-level tasks shouldn't collide; concurrent
- * *commands* are the real hazard, and this removes it.
- */
-const workspaceLocks = new Map<string, Promise<unknown>>();
-
-function withWorkspaceLock<T>(workspace: string, fn: () => Promise<T>): Promise<T> {
-  const prior = workspaceLocks.get(workspace) ?? Promise.resolve();
-  const next = prior.then(fn, fn);
-  // keep the chain alive even when a command rejects
-  workspaceLocks.set(workspace, next.catch(() => undefined));
-  return next;
 }
 
 export function runCommand(
@@ -169,6 +153,36 @@ export async function executeTool(ctx: ToolContext, call: ToolCall): Promise<Too
   } catch (err) {
     return { ok: false, output: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * path -> mtimeMs, so a task can be credited with only the files it actually
+ * touched. Without this every task re-registers the whole shared workspace and
+ * artifacts pile up O(n²), attributed to the wrong task.
+ */
+export function workspaceSnapshot(workspace: string): Map<string, number> {
+  const snap = new Map<string, number>();
+  for (const rel of workspaceFiles(workspace)) {
+    try {
+      snap.set(rel, statSync(join(workspace, rel)).mtimeMs);
+    } catch {
+      // vanished between listing and stat — treat as absent
+    }
+  }
+  return snap;
+}
+
+/** Files created or modified since the snapshot was taken. */
+export function changedSince(workspace: string, before: Map<string, number>): string[] {
+  return workspaceFiles(workspace).filter((rel) => {
+    const prior = before.get(rel);
+    if (prior === undefined) return true;
+    try {
+      return statSync(join(workspace, rel)).mtimeMs !== prior;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Files the builder actually produced, for artifact registration. */
