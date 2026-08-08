@@ -159,12 +159,13 @@ describe("runPipeline", () => {
     const ws = join(rig.dir, "runs", run.id, "workspace");
     expect(existsSync(join(ws, "docs", "task-1.md"))).toBe(true);
 
-    // builder crashed once (invalid JSON), retried with the error as feedback,
-    // then passed on attempt 2
-    expect(tasks[1]!.iterations).toBe(2);
+    // The builder's first reply was malformed. The agentic loop corrects that
+    // *within* the same attempt (cheaper than burning a whole task iteration
+    // on a restart), so the task passes first time round.
+    expect(tasks[1]!.iterations).toBe(1);
     const builderCalls = rig.mock.calls.filter((c) => c.model === "build-model");
     expect(builderCalls).toHaveLength(2);
-    expect(builderCalls[1]!.input).toContain("crashed");
+    expect(builderCalls[1]!.input).toMatch(/not valid JSON/);
   });
 
   it("discuss mode talks first and dispatches nobody until approved", async () => {

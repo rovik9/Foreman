@@ -43,12 +43,31 @@ function fmtJSON(data) {
   );
 }
 
+/** Tool calls render like a terminal, not a JSON blob — you should be able to
+ *  read what the builder actually ran and what came back. */
+function toolLine(e) {
+  const d = e.data;
+  const cmd = d.tool === "run_command"
+    ? (Array.isArray(d.args?.command) ? d.args.command.join(" ") : String(d.args?.command ?? ""))
+    : `${d.tool} ${d.args?.path ?? ""}`.trim();
+  return `
+    <div class="ev-head">
+      <span class="ev-type">${esc(d.tool)}</span>
+      <span class="tool-status ${d.ok ? "ok" : "err"}">${d.ok ? "ok" : "failed"}</span>
+      <span class="ev-meta">${esc(e.at.slice(11, 19))}</span>
+    </div>
+    <div class="tool-cmd"><span class="tool-prompt">$</span> ${esc(cmd)}</div>
+    ${d.output ? `<pre class="ev-body tool-out">${esc(d.output)}</pre>` : ""}`;
+}
+
 export function feedLine(e) {
   const feed = document.getElementById("stage-feed");
   const div = document.createElement("div");
   div.className = `ev ev-${e.type}`;
-  div.innerHTML = `<div class="ev-head"><span class="ev-type">${esc(e.type)}</span><span class="ev-meta">${esc(e.at.slice(11, 19))}</span></div>
-    <pre class="ev-body">${fmtJSON(e.data)}</pre>`;
+  div.innerHTML = e.type === "tool_call"
+    ? toolLine(e)
+    : `<div class="ev-head"><span class="ev-type">${esc(e.type)}</span><span class="ev-meta">${esc(e.at.slice(11, 19))}</span></div>
+       <pre class="ev-body">${fmtJSON(e.data)}</pre>`;
   feed.appendChild(div);
   feed.scrollTop = feed.scrollHeight;
 }
@@ -126,7 +145,7 @@ export async function renderPermissions() {
 }
 
 export function bindStageEvents(refresh) {
-  for (const type of ["run_status", "task_status", "agent_call", "gate", "judge", "message", "artifact"]) {
+  for (const type of ["run_status", "task_status", "agent_call", "gate", "judge", "message", "artifact", "tool_call"]) {
     sse.on(type, (e) => {
       feedLine(e);
       if (["task_status", "run_status", "artifact"].includes(e.type)) refresh();

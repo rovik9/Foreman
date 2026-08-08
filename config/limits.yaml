@@ -18,3 +18,5 @@ sandbox:
     - vitest
     - forge      # Foundry (Phase 4)
     - slither    # Phase 4
+  max_tool_steps: 24              # tool calls one builder attempt may make
+  command_timeout_ms: 120000      # per-command wall clock

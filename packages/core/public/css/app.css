@@ -304,6 +304,20 @@ a:hover { text-decoration: underline; }
 .ev-judge { border-left-color: var(--warn); }
 .ev-artifact { border-left-color: var(--accent-2); }
 .ev-message { border-left-color: var(--brand); }
+.ev-tool_call { border-left-color: var(--ok); }
+.tool-status {
+  font: 700 9px var(--font); text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: 999px;
+}
+.tool-status.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.tool-status.err { color: var(--err); background: color-mix(in srgb, var(--err) 16%, transparent); }
+.tool-cmd {
+  margin: 5px 0 6px; padding: 7px 10px; border-radius: var(--r-xs);
+  background: rgba(0, 0, 0, .38); border: 1px solid var(--glass-border);
+  font: 12px/1.5 var(--mono); color: var(--text); word-break: break-all;
+}
+.tool-prompt { color: var(--ok); font-weight: 700; margin-right: 7px; user-select: none; }
+.tool-out { color: var(--text-3); font-size: 11px; max-height: 300px; }
 .ev-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .ev-type { font: 800 10px var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); }
 .ev-meta { margin-left: auto; font: 510 10.5px var(--mono); color: var(--text-4); }

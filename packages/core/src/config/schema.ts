@@ -70,7 +70,11 @@ export const LimitsConfigSchema = z.object({
   judge_pass_score: z.number().min(0).max(1),
   sandbox: z.object({
     workspace_root: z.string().min(1),
+    /** Binaries a builder may execute. Everything else is refused. */
     shell_allowlist: z.array(z.string().min(1)).min(1),
+    /** Tool calls one builder attempt may make before it's cut off. */
+    max_tool_steps: z.number().int().positive().default(24),
+    command_timeout_ms: z.number().int().positive().default(120_000),
   }),
 });
 export type LimitsConfig = z.infer<typeof LimitsConfigSchema>;

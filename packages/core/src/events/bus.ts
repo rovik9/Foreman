@@ -9,7 +9,8 @@ export interface ForemanEvent {
     | "cost"
     | "gate"
     | "judge"
-    | "artifact";
+    | "artifact"
+    | "tool_call";
   runId: string;
   taskId?: string;
   data: unknown;

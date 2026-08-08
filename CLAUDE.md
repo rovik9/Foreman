@@ -171,6 +171,34 @@ now — the gateway registers adapters once at boot; hot-reloading a live bot co
 materially different feature than live-swapping a stateless API key, deliberately out of
 scope for this pass.
 
+## Builders have real tools (`agents/tools.ts`, `agents/builder.ts`)
+
+Builders are agents, not one-shot file emitters. `buildTaskAgentic` loops: the model
+looks around, edits, **runs the command, reads the actual output, and fixes what broke** —
+the same loop that makes Claude Code work. Tools: `run_command`, `read_file`, `write_file`,
+`list_files`, driven by a one-JSON-object-per-turn protocol (portable across every provider
+including local Ollama — no vendor-specific tool-calling wire format).
+
+Safety rails, all tested in `test/tools.test.ts`:
+- **Workspace jail** — every path resolves inside `runs/<id>/workspace`; `..` and absolute
+  paths are refused.
+- **Binary allowlist** — `sandbox.shell_allowlist`. A blocked binary returns an error telling
+  the model what *is* allowed, so it self-corrects.
+- **No shell** — argv array to `spawn()`, never `sh -c`, so metacharacters are inert.
+- **Per-command timeout** and **output truncation** (a 400k-char log won't blow the context).
+- **One command at a time per workspace.** Parallel builders share a directory, so two
+  concurrent `npm install`s would corrupt the lockfile and produce failures that look like
+  the model's fault but aren't. A per-workspace mutex serialises commands.
+- **Budget/stop honoured between steps**, so a runaway loop still respects the cap.
+- A model that replies with a whole file set instead of driving tools is honoured as-is,
+  without burning a second call.
+
+**Trust model — be honest about this.** The allowlist includes `npx` and `node`, which can
+execute arbitrary code. The sandbox contains *accidents* (path escapes, runaway loops, cost
+blowouts, concurrent-command corruption), **not a hostile model**: commands run as your OS
+user, exactly like Claude Code. Don't describe it as a security boundary against malicious
+output. Narrow the allowlist if that matters for a given deployment.
+
 ## Config precedence (`config/overrides.ts`)
 
 `config/*.yaml` supplies defaults; anything edited in Settings → Engine overrides it. Overrides

@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import type { AgentHarness } from "../agents/harness.js";
 import { planTasks } from "../agents/architect.js";
 import { refinePrompt, type PmSpec } from "../agents/pm.js";
-import { buildTask } from "../agents/builder.js";
+import { buildTaskAgentic } from "../agents/builder.js";
 import { docTask } from "../agents/doc.js";
 import { judgeTask } from "../agents/judge.js";
 import { getRealtimeFeed } from "../agents/realtime.js";
@@ -506,15 +506,35 @@ async function runTask(
     try {
       const taskMemory = recallBlock(store, task.description, 4);
       if (task.class === "build") {
-        const built = await buildTask(
+        // real tool use: the builder runs commands and reacts to output rather
+        // than emitting files blind (see agents/tools.ts for the sandbox)
+        const built = await buildTaskAgentic(
           harness,
           runId,
           task,
           specForBuild,
           workspace,
+          {
+            workspace,
+            allowlist: limits.sandbox.shell_allowlist,
+            commandTimeoutMs: limits.sandbox.command_timeout_ms,
+          },
           feedback,
           recentUserSteering(store, runId),
           taskMemory,
+          {
+            maxSteps: limits.sandbox.max_tool_steps,
+            shouldStop: () =>
+              store.getRun(runId).status === "stopped" ||
+              store.runCost(runId) >= limits.max_cost_per_run_usd + store.getRun(runId).budget_raise,
+            onStep: (s) =>
+              bus.emit({
+                type: "tool_call",
+                runId,
+                taskId: task.id,
+                data: { tool: s.tool, args: s.args, ok: s.ok, output: s.output },
+              }),
+          },
         );
 
         // register everything the builder produced
